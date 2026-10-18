@@ -13,5 +13,8 @@
   // ID を書かないと、初回の wrangler deploy で自動作成される（自動プロビジョニング）
   "d1_databases": [{ "binding": "DB", "database_name": "sanma-ledger-db" }],
   "kv_namespaces": [{ "binding": "PHOTOS" }],
+  // workers.dev のURLを有効にし、試験用のURLは作らない
+  "workers_dev": true,
+  "preview_urls": false,
   "observability": { "enabled": true }
 }
