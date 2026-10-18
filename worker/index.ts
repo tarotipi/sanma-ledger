@@ -438,8 +438,10 @@ app.get("/api/g/:gid/logs", async (c) => {
   const before = Number(c.req.query("before") ?? 0) || Number.MAX_SAFE_INTEGER;
   const entity = c.req.query("entity");
   const entityId = c.req.query("entityId");
-  // 記録係の訂正（admin_*）はここには出さない。管理者は /admin/logs で見る。
-  let sql = `SELECT * FROM audit_logs WHERE group_id=? AND id<? AND action NOT IN ('admin_update','admin_delete','admin_restore')`;
+  // プレイヤー向けの履歴。半荘の訂正・削除（記録係・通常どちらも）はここには出さない。
+  // 半荘は「追加(insert)」だけ見せる。訂正・削除は管理者が /admin/logs で見る。
+  let sql = `SELECT * FROM audit_logs WHERE group_id=? AND id<?
+    AND NOT (entity='games' AND action IN ('update','delete','restore','admin_update','admin_delete','admin_restore'))`;
   const params: unknown[] = [gid, before];
   if (entity) {
     sql += ` AND entity=?`;
@@ -765,8 +767,10 @@ app.post("/api/g/:gid/admin/logs", async (c) => {
   const gid = c.get("actor").groupId;
   const limit = Math.min(Number(b.limit ?? 50) || 50, 200);
   const before = Number(b.before ?? 0) || Number.MAX_SAFE_INTEGER;
+  // 管理者はすべての半荘の訂正・削除を見られる（記録係の訂正 admin_* も、古い通常の変更・削除も）
   const r = await c.env.DB.prepare(
-    `SELECT * FROM audit_logs WHERE group_id=? AND id<? AND action IN ('admin_update','admin_delete','admin_restore')
+    `SELECT * FROM audit_logs WHERE group_id=? AND id<?
+     AND entity='games' AND action IN ('update','delete','restore','admin_update','admin_delete','admin_restore')
      ORDER BY id DESC LIMIT ?`,
   )
     .bind(gid, before, limit)

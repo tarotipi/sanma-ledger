@@ -95,7 +95,7 @@ function Scoreboard({ sid }: { sid: string }) {
 }
 
 function RecordView({ sid }: { sid: string }) {
-  const { state } = useGroup();
+  const { state, admin } = useGroup();
   const [editing, setEditing] = useState<{ open: boolean; game: Game | null }>({ open: false, game: null });
   const [detail, setDetail] = useState<Game | null>(null);
   if (!state) return null;
@@ -116,7 +116,8 @@ function RecordView({ sid }: { sid: string }) {
         <ol className="games">
           {games.map((g) => {
             const r = calcGame(g.scores, g.rate);
-            const edited = g.updatedAt !== g.createdAt;
+            // 「変更」バッジは管理者だけに見せる（プレイヤーには訂正の跡を出さない）
+            const edited = admin && g.updatedAt !== g.createdAt;
             return (
               <li key={g.id}>
                 <button type="button" className={`game ${g.id.startsWith("tmp-") ? "pending" : ""}`} onClick={() => setDetail(g)}>

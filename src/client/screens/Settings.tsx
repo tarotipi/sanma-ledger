@@ -481,7 +481,14 @@ function AdminLogs() {
     const s = state.sessions.find((x) => x.id === sid);
     return s ? (s.title === s.playedOn ? s.playedOn : s.title) : "";
   };
-  const ACT: Record<string, string> = { admin_update: "訂正", admin_delete: "削除", admin_restore: "復元" };
+  const ACT: Record<string, string> = {
+    admin_update: "訂正",
+    admin_delete: "削除",
+    admin_restore: "復元",
+    update: "変更",
+    delete: "削除",
+    restore: "復元",
+  };
 
   const load = async () => {
     setLoading(true);
@@ -523,7 +530,7 @@ function AdminLogs() {
                 <p>
                   {sessionTitle(l.before?.sessionId)} 第{l.before?.seq}半荘
                 </p>
-                {l.action === "admin_update" ? (
+                {l.action === "admin_update" || l.action === "update" ? (
                   ids.map((id) => {
                     const x = b.find((s) => s.memberId === id);
                     const y = a.find((s) => s.memberId === id);
