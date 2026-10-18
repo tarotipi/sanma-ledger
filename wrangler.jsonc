@@ -1,0 +1,17 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "sanma-ledger",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-09-01",
+  // wrangler deploy / dev の前に画面をビルドする（Cloudflare側のビルド設定が空でも動くように）
+  "build": { "command": "npx vite build" },
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  // ID を書かないと、初回の wrangler deploy で自動作成される（自動プロビジョニング）
+  "d1_databases": [{ "binding": "DB", "database_name": "sanma-ledger-db" }],
+  "kv_namespaces": [{ "binding": "PHOTOS" }],
+  "observability": { "enabled": true }
+}
