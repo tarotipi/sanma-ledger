@@ -10,9 +10,14 @@ export function SettleView({ sid }: { sid: string }) {
   const { state, api, refresh, toast } = useGroup();
   const [adjOpen, setAdjOpen] = useState<{ open: boolean; entry: Adjustment | null }>({ open: false, entry: null });
   const [confirm, setConfirm] = useState<ConfirmSpec | null>(null);
+  const [withChips, setWithChips] = useState(true);
   if (!state) return null;
   const session = sessionOf(state, sid)!;
-  const balances = sessionBalances(state, sid);
+  const real = sessionBalances(state, sid);
+  // チップなし表示のときは、チップ分を抜いた収支で精算・送金を出す
+  const balances = withChips
+    ? real
+    : Object.fromEntries(Object.entries(real).map(([k, b]) => [k, { ...b, chips: 0, total: b.total - b.chips }]));
   const people = participants(state, sid);
   const mm = new Map(state.members.map((m) => [m.id, m]));
   const transfers = calcTransfers(balances);
@@ -20,6 +25,7 @@ export function SettleView({ sid }: { sid: string }) {
     state.settlements.filter((x) => x.sessionId === sid && !x.deletedAt).map((x) => [x.memberId, x]),
   );
   const adjs = state.adjustments.filter((a) => a.sessionId === sid && !a.deletedAt);
+  const hasChips = Object.values(real).some((b) => b.chips !== 0 || b.chipBuy !== 0 || b.chipReturn !== 0);
   const rows = people
     .map((m) => ({ m, b: balances[m.id] }))
     .filter((r) => r.b)
@@ -104,6 +110,16 @@ export function SettleView({ sid }: { sid: string }) {
 
   return (
     <>
+      {rows.length > 0 && hasChips && (
+        <div className="seg">
+          <button type="button" className={withChips ? "on" : ""} onClick={() => setWithChips(true)}>
+            チップ込み
+          </button>
+          <button type="button" className={!withChips ? "on" : ""} onClick={() => setWithChips(false)}>
+            チップなし
+          </button>
+        </div>
+      )}
       {rows.length === 0 ? (
         <Empty>半荘を記録すると精算額が出ます。</Empty>
       ) : (
@@ -126,7 +142,9 @@ export function SettleView({ sid }: { sid: string }) {
                       <Name m={m} />
                     </td>
                     <td className="num">{fmtYen(b.mahjong)}</td>
-                    <td className="num">{fmtYen(b.chips)}</td>
+                    <td className={`num ${withChips ? "" : "zero"}`}>
+                      {withChips ? fmtYen(b.chips) : `(${fmtYen(real[m.id].chips)})`}
+                    </td>
                     <td className="num">{fmtYen(b.external + b.internal)}</td>
                     <td className="num strong">
                       <Yen v={b.total} />
@@ -178,7 +196,10 @@ export function SettleView({ sid }: { sid: string }) {
               </li>
             ))}
           </ul>
-          <p className="note">麻雀収支・チップ・メンバー間の調整が対象です。店に払う場代などは各自の最終収支に入っています。</p>
+          <p className="note">
+            {withChips ? "麻雀収支・チップ・メンバー間の調整が対象です。" : "チップを除いた（麻雀収支・メンバー間の調整）金額です。チップは別で清算します。"}
+            店に払う場代などは各自の最終収支に入っています。
+          </p>
         </section>
       )}
 
