@@ -24,7 +24,7 @@ export function usePath(): { path: string; query: URLSearchParams } {
 export type Route =
   | { name: "home" }
   | { name: "group"; gid: string }
-  | { name: "groupTab"; gid: string; tab: "stats" | "history" | "settings" }
+  | { name: "groupTab"; gid: string; tab: "stats" | "history" | "settings" | "yakuman" }
   | { name: "session"; gid: string; sid: string; tab: SessionTab };
 
 export type SessionTab = "record" | "stats" | "settle" | "history" | "settings";
@@ -37,6 +37,7 @@ export function parseRoute(path: string): Route {
     const tab = (["record", "stats", "settle", "history", "settings"] as const).find((t) => t === p[4]) ?? "record";
     return { name: "session", gid, sid: p[3], tab };
   }
-  if (p[2] === "stats" || p[2] === "history" || p[2] === "settings") return { name: "groupTab", gid, tab: p[2] };
+  if (p[2] === "stats" || p[2] === "history" || p[2] === "settings" || p[2] === "yakuman")
+    return { name: "groupTab", gid, tab: p[2] };
   return { name: "group", gid };
 }

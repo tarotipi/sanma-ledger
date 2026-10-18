@@ -13,6 +13,7 @@ export function sessionBalances(state: GroupState, sid: string): Record<string, 
     chips: state.chips.filter((c) => c.sessionId === sid && !c.deletedAt),
     adjustments: state.adjustments.filter((a) => a.sessionId === sid && !a.deletedAt),
     chipYen: s?.chipYen ?? 100,
+    chipEvents: state.chipEvents.filter((e) => e.sessionId === sid && !e.deletedAt),
   });
 }
 
@@ -25,6 +26,7 @@ export function participants(state: GroupState, sid: string): Member[] {
     .filter((a) => a.sessionId === sid && !a.deletedAt)
     .forEach((a) => a.lines.forEach((l) => ids.add(l.memberId)));
   state.settlements.filter((x) => x.sessionId === sid && !x.deletedAt).forEach((x) => ids.add(x.memberId));
+  state.chipEvents.filter((x) => x.sessionId === sid && !x.deletedAt).forEach((x) => ids.add(x.memberId));
   return state.members.filter((m) => ids.has(m.id));
 }
 

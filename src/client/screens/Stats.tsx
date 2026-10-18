@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { gamesInOrder, useGroup } from "../store";
+import { navigate } from "../router";
 import { Empty, Name, Yen, pct } from "../ui";
 import { calcGame, calcStats, fmtPt, fmtScore, type PlayerStats } from "../../shared/mahjong";
 import type { Game, Member } from "../../shared/types";
@@ -33,7 +34,7 @@ const COLS: Col[] = [
 ];
 
 export function StatsView({ sid }: { sid?: string }) {
-  const { state } = useGroup();
+  const { state, gid } = useGroup();
   const [scope, setScope] = useState<"session" | "all">(sid ? "session" : "all");
   const [sort, setSort] = useState<{ key: string; desc: boolean }>({ key: "yen", desc: true });
   const games = useMemo(
@@ -131,6 +132,9 @@ export function StatsView({ sid }: { sid?: string }) {
             }
           >
             成績をCSVで保存
+          </button>
+          <button type="button" className="btn ghost wide" onClick={() => navigate(`/g/${gid}/yakuman`)}>
+            役満の殿堂を見る
           </button>
         </>
       )}

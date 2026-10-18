@@ -231,7 +231,28 @@ const mapPhoto = (r: Row) => ({
   deletedAt: r.deleted_at,
 });
 
+const mapChipEvent = (r: Row) => ({
+  id: r.id,
+  sessionId: r.session_id,
+  memberId: r.member_id,
+  kind: r.kind,
+  amount: r.amount,
+  createdAt: r.created_at,
+  deletedAt: r.deleted_at,
+});
+const mapYakuman = (r: Row) => ({
+  id: r.id,
+  sessionId: r.session_id,
+  gameId: r.game_id,
+  memberId: r.member_id,
+  name: r.name,
+  createdAt: r.created_at,
+  deletedAt: r.deleted_at,
+});
+
 const TABLES = {
+  chip_events: mapChipEvent,
+  yakuman: mapYakuman,
   sessions: mapSession,
   games: mapGame,
   chips: mapChip,
@@ -378,7 +399,7 @@ app.get("/api/g/:gid/version", async (c) => c.json({ version: await version(c) }
 app.get("/api/g/:gid/state", async (c) => {
   const gid = c.get("actor").groupId;
   const q = (sql: string) => c.env.DB.prepare(sql).bind(gid);
-  const [g, members, sessions, games, chips, adj, settle, photos, v] = await c.env.DB.batch<Row>([
+  const [g, members, sessions, games, chips, adj, settle, photos, v, chipEv, yaku] = await c.env.DB.batch<Row>([
     c.env.DB.prepare(
       `SELECT g.id, g.name, g.join_hash != '' AS has_code, (SELECT value FROM meta WHERE key = 'bg:' || g.id) AS bg
        FROM groups g WHERE g.id=?`,
@@ -391,6 +412,8 @@ app.get("/api/g/:gid/state", async (c) => {
     q(`SELECT * FROM settlements WHERE group_id=? ORDER BY created_at`),
     q(`SELECT * FROM photos WHERE group_id=? ORDER BY created_at`),
     q(`SELECT COALESCE(MAX(id),0) AS v FROM audit_logs WHERE group_id=?`),
+    q(`SELECT * FROM chip_events WHERE group_id=? ORDER BY created_at`),
+    q(`SELECT * FROM yakuman WHERE group_id=? ORDER BY created_at`),
   ]);
   const gr = g.results[0];
   if (!gr) throw new HttpError(404, "グループが見つかりません。");
@@ -403,6 +426,8 @@ app.get("/api/g/:gid/state", async (c) => {
     adjustments: adj.results.map(mapAdj),
     settlements: settle.results.map(mapSettle),
     photos: photos.results.map(mapPhoto),
+    chipEvents: chipEv.results.map(mapChipEvent),
+    yakuman: yaku.results.map(mapYakuman),
     version: Number(v.results[0]?.v ?? 0),
   });
 });
@@ -818,12 +843,72 @@ app.post("/api/g/:gid/settlements", async (c) => {
   return c.json(e);
 });
 
+// ---------- チップ（バイイン・返却・枚数） ----------
+
+app.post("/api/g/:gid/chip-events", async (c) => {
+  const b = await body<{ sessionId: unknown; memberIds: unknown; kind: unknown; amount: unknown }>(c);
+  const s = await requireSession(c, b.sessionId);
+  const kind = b.kind === "return" ? "return" : b.kind === "count" ? "count" : b.kind === "buy" ? "buy" : null;
+  if (!kind) throw new HttpError(400, "種類が正しくありません。");
+  const amount = int(b.amount, kind === "count" ? "枚数" : "金額");
+  if (amount < 0 || amount > 10000000) throw new HttpError(400, kind === "count" ? "枚数は0以上で入れてください。" : "金額は0円以上で入れてください。");
+  if (kind !== "count" && amount === 0) throw new HttpError(400, "金額を入れてください。");
+  const ids = await memberIds(c);
+  if (!Array.isArray(b.memberIds) || !b.memberIds.length || b.memberIds.some((m) => typeof m !== "string" || !ids.has(m)))
+    throw new HttpError(400, "人を選んでください。");
+  if (kind === "count" && b.memberIds.length !== 1) throw new HttpError(400, "枚数は1人ずつ入れてください。");
+  const t = now();
+  const stmts: D1PreparedStatement[] = [];
+  const out = (b.memberIds as string[]).map((memberId) => {
+    const e = { id: uid(), sessionId: String(s.id), memberId, kind, amount, createdAt: t, deletedAt: null };
+    stmts.push(
+      c.env.DB.prepare(
+        `INSERT INTO chip_events(id,group_id,session_id,member_id,kind,amount,created_at) VALUES (?,?,?,?,?,?,?)`,
+      ).bind(e.id, c.get("actor").groupId, e.sessionId, memberId, kind, amount, t),
+      audit(c, "chip_events", e.id, "insert", null, e),
+    );
+    return e;
+  });
+  await c.env.DB.batch(stmts);
+  return c.json(out);
+});
+
+// ---------- 役満 ----------
+
+app.post("/api/g/:gid/yakuman", async (c) => {
+  const b = await body<{ sessionId: unknown; gameId?: unknown; memberId: unknown; name?: unknown }>(c);
+  const s = await requireSession(c, b.sessionId);
+  const ids = await memberIds(c);
+  if (typeof b.memberId !== "string" || !ids.has(b.memberId)) throw new HttpError(400, "役満を出した人を選んでください。");
+  const gameId = typeof b.gameId === "string" && b.gameId ? b.gameId : null;
+  if (gameId) await getRow(c, "games", gameId);
+  const y = {
+    id: uid(),
+    sessionId: String(s.id),
+    gameId,
+    memberId: b.memberId,
+    name: b.name === undefined ? "" : str(b.name, "役の名前", 30, true),
+    createdAt: now(),
+    deletedAt: null,
+  };
+  await c.env.DB.batch([
+    c.env.DB.prepare(
+      `INSERT INTO yakuman(id,group_id,session_id,game_id,member_id,name,created_at) VALUES (?,?,?,?,?,?,?)`,
+    ).bind(y.id, c.get("actor").groupId, y.sessionId, gameId, y.memberId, y.name, y.createdAt),
+    audit(c, "yakuman", y.id, "insert", null, y),
+  ]);
+  return c.json(y);
+});
+
 // ---------- 写真 ----------
 
 app.post("/api/g/:gid/photos", async (c) => {
   const s = await requireSession(c, c.req.query("sessionId"));
-  const gameId = c.req.query("gameId") || null;
-  if (gameId) await getRow(c, "games", gameId);
+  // 役満の記念写真は yakumanId を game_id 列に入れて紐づける
+  const yakumanId = c.req.query("yakumanId") || null;
+  const gameId = yakumanId ?? (c.req.query("gameId") || null);
+  if (yakumanId) await getRow(c, "yakuman", yakumanId);
+  else if (gameId) await getRow(c, "games", gameId);
   const type = c.req.header("content-type") ?? "";
   if (!/^image\/(jpeg|png|webp)$/.test(type)) throw new HttpError(400, "画像ファイルを選んでください。");
   const buf = await c.req.arrayBuffer();

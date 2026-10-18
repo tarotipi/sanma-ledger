@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { useGroup, liveGames } from "../store";
 import { Confirm, Dot, Name, Sheet, Yen, type ConfirmSpec } from "../ui";
-import { RULES, calcGame, fmtPt, fmtScore, tieGroups, validateGame } from "../../shared/mahjong";
+import { RULES, calcGame, fmtPt, fmtScore, suggestNext, tieGroups, validateGame } from "../../shared/mahjong";
 import type { Game, GroupState, Score } from "../../shared/types";
 import { settledImpact } from "../logic";
+
+const YAKU = ["国士無双", "四暗刻", "大三元", "字一色", "緑一色", "清老頭", "小四喜", "大四喜", "四槓子", "九蓮宝燈", "天和", "地和", "数え役満"];
 
 type Slot = { memberId: string; text: string; neg: boolean; auto: boolean };
 
@@ -99,10 +101,14 @@ export function GameEditor({
   const [slots, setSlots] = useState<Slot[]>([]);
   const [ties, setTies] = useState<Record<string, number>>({});
   const [confirm, setConfirm] = useState<ConfirmSpec | null>(null);
+  const [hint, setHint] = useState<string | null>(null);
+  const [yaku, setYaku] = useState<{ on: boolean; memberId: string; name: string }>({ on: false, memberId: "", name: "" });
   const session = state?.sessions.find((s) => s.id === sessionId);
 
   useEffect(() => {
     if (!open || !state) return;
+    setHint(null);
+    setYaku({ on: false, memberId: "", name: "" });
     if (game) {
       setSlots(game.scores.map((s) => ({ memberId: s.memberId, text: String(Math.abs(s.score)), neg: s.score < 0, auto: false })));
       const t: Record<string, number> = {};
@@ -111,8 +117,16 @@ export function GameEditor({
       });
       setTies(t);
     } else {
-      const prev = liveGames(state, sessionId).sort((a, b) => b.seq - a.seq)[0];
-      setSlots((prev?.scores ?? []).map((s) => ({ memberId: s.memberId, text: "", neg: false, auto: false })));
+      // 抜け番の順番を読み取って、次の3人を最初から選んでおく
+      const live = liveGames(state, sessionId);
+      const left = new Set(state.settlements.filter((x) => x.sessionId === sessionId && !x.deletedAt).map((x) => x.memberId));
+      const sug = suggestNext(live, state.members.map((m) => m.id), left);
+      const ids = sug?.players ?? [];
+      setSlots(ids.map((id) => ({ memberId: id, text: "", neg: false, auto: false })));
+      if (sug?.sitOut.length) {
+        const names = sug.sitOut.map((id) => state.members.find((m) => m.id === id)?.name).join("・");
+        setHint(`次の抜け番は ${names}（これまでの順番から）`);
+      }
       setTies({});
     }
   }, [open, game?.id]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -187,6 +201,7 @@ export function GameEditor({
       : { ...state, games: [...state.games, after] };
     const impact = settledImpact(state, nextState, sessionId);
 
+    const pendingYaku = yaku.on && yaku.memberId ? { memberId: yaku.memberId, name: yaku.name.trim() } : null;
     const run = async () => {
       patchState(() => nextState);
       onClose();
@@ -196,6 +211,7 @@ export function GameEditor({
           : await api<Game>("POST", "/games", { sessionId, scores });
         patchState((s) => ({ ...s, games: s.games.map((g) => (g.id === after.id ? saved : g)) }));
         toast(game ? `第${saved.seq}半荘を変更しました` : `第${saved.seq}半荘を記録しました`);
+        if (pendingYaku) await api("POST", "/yakuman", { sessionId, gameId: saved.id, ...pendingYaku });
       } catch (e) {
         toast(e instanceof Error ? e.message : "保存できませんでした。");
       } finally {
@@ -237,7 +253,12 @@ export function GameEditor({
         onClose={onClose}
         title={game ? `第${game.seq}半荘を編集` : "半荘を記録"}
         footer={
-          <button type="button" className="btn primary wide" disabled={!validation?.ok} onClick={() => void save()}>
+          <button
+            type="button"
+            className="btn primary wide"
+            disabled={!validation?.ok || (yaku.on && !yaku.memberId)}
+            onClick={() => void save()}
+          >
             {game ? "変更を保存" : "記録する"}
           </button>
         }
@@ -262,6 +283,7 @@ export function GameEditor({
               );
             })}
           </div>
+          {hint && <p className="note">{hint}</p>}
 
           {slots.length === 3 && (
             <>
@@ -352,6 +374,46 @@ export function GameEditor({
                   </tbody>
                 </table>
               )}
+
+              <div className="yaku">
+                <button
+                  type="button"
+                  className={`chip yaku-btn ${yaku.on ? "on" : ""}`}
+                  aria-pressed={yaku.on}
+                  onClick={() => setYaku((y) => ({ ...y, on: !y.on }))}
+                >
+                  役満が出た
+                </button>
+                {yaku.on && (
+                  <div className="yaku-body">
+                    <div className="chips">
+                      {slots.map((s) => (
+                        <button
+                          key={s.memberId}
+                          type="button"
+                          className={`chip ${yaku.memberId === s.memberId ? "on" : ""}`}
+                          onClick={() => setYaku((y) => ({ ...y, memberId: s.memberId }))}
+                        >
+                          <Dot m={mm.get(s.memberId)} />
+                          {mm.get(s.memberId)?.name}
+                        </button>
+                      ))}
+                    </div>
+                    <input
+                      list="yaku-names"
+                      value={yaku.name}
+                      onChange={(e) => setYaku((y) => ({ ...y, name: e.target.value }))}
+                      placeholder="役の名前（任意）"
+                      maxLength={30}
+                    />
+                    <datalist id="yaku-names">
+                      {YAKU.map((n) => (
+                        <option key={n} value={n} />
+                      ))}
+                    </datalist>
+                  </div>
+                )}
+              </div>
             </>
           )}
         </section>

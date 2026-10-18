@@ -101,6 +101,7 @@ function RecordView({ sid }: { sid: string }) {
   if (!state) return null;
   const games = liveGames(state, sid).sort((a, b) => b.seq - a.seq);
   const mm = new Map(state.members.map((m) => [m.id, m]));
+  const yakuGames = new Set(state.yakuman.filter((y) => !y.deletedAt && y.gameId).map((y) => y.gameId));
 
   return (
     <>
@@ -123,6 +124,7 @@ function RecordView({ sid }: { sid: string }) {
                     <b>{g.seq}</b>
                     <small>{fmtDateTime(g.createdAt).split(" ")[1]}</small>
                     {edited && <em className="tag">変更</em>}
+                    {yakuGames.has(g.id) && <em className="tag yaku-tag">役満</em>}
                   </span>
                   <span className="lines">
                     {r.map((x) => (
@@ -248,6 +250,39 @@ function GameDetail({ game, onClose, onEdit }: { game: Game | null; onClose: () 
               記録 {fmtDateTime(g.createdAt)}
               {g.updatedAt !== g.createdAt && `　最終変更 ${fmtDateTime(g.updatedAt)}`}　1pt＝{g.rate}円
             </p>
+            {!pending &&
+              state.yakuman
+                .filter((y) => y.gameId === g.id && !y.deletedAt)
+                .map((y) => (
+                  <div key={y.id} className="yaku-body row-between">
+                    <span>
+                      役満　<b>{mm.get(y.memberId)?.name}</b> {y.name}
+                    </span>
+                    <button
+                      type="button"
+                      className="btn small ghost danger"
+                      onClick={() =>
+                        setConfirm({
+                          title: "役満の記録を削除しますか",
+                          body: <p>削除した記録は履歴から元に戻せます。</p>,
+                          okLabel: "削除する",
+                          danger: true,
+                          onOk: async () => {
+                            try {
+                              await api("POST", `/yakuman/${y.id}/delete`);
+                              toast("役満の記録を削除しました");
+                              await refresh();
+                            } catch (e) {
+                              toast(e instanceof Error ? e.message : "削除できませんでした。");
+                            }
+                          },
+                        })
+                      }
+                    >
+                      削除
+                    </button>
+                  </div>
+                ))}
             {!pending && (
               <>
                 <button

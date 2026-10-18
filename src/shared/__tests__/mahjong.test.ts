@@ -5,9 +5,10 @@ import {
   calcStats,
   calcTransfers,
   splitFee,
+  suggestNext,
   validateGame,
 } from "../mahjong";
-import type { Adjustment, ChipEntry, Game, Score } from "../types";
+import type { Adjustment, ChipEntry, ChipEvent, Game, Score } from "../types";
 
 const S = (a: number, b: number, c: number, ties?: [number?, number?, number?]): Score[] => [
   { memberId: "A", score: a, tie: ties?.[0] },
@@ -162,5 +163,86 @@ describe("精算", () => {
       { memberId: "A", yen: -2000 },
       { memberId: "B", yen: -1000 },
     ]);
+  });
+});
+
+describe("チップ（バイイン方式）", () => {
+  const ev = (memberId: string, kind: ChipEvent["kind"], amount: number, t: string): ChipEvent => ({
+    id: memberId + kind + t,
+    sessionId: "s",
+    memberId,
+    kind,
+    amount,
+    createdAt: t,
+    deletedAt: null,
+  });
+  it("枚数×単価 − バイイン ＋ 返却。最新の枚数だけが有効", () => {
+    const b = calcBalances({
+      games: [],
+      chips: [],
+      adjustments: [],
+      chipYen: 100,
+      chipEvents: [
+        ev("A", "buy", 2000, "1"),
+        ev("B", "buy", 2000, "1"),
+        ev("A", "buy", 1000, "2"), // Aが追加でバイイン
+        ev("B", "return", 1000, "3"), // Bが増えすぎた分を返却
+        ev("A", "count", 99, "4"),
+        ev("A", "count", 5, "5"),
+        ev("B", "count", 35, "5"),
+      ],
+    });
+    expect(b.A.chips).toBe(5 * 100 - 3000);
+    expect(b.B.chips).toBe(35 * 100 - 2000 + 1000);
+    expect(b.A.chipCount).toBe(5);
+    // チップが保存されていれば合計0（買った額−返した額＝最後の枚数の合計）
+    expect(b.A.chips + b.B.chips).toBe(0);
+  });
+  it("枚数未入力は null", () => {
+    const b = calcBalances({ games: [], chips: [], adjustments: [], chipYen: 100, chipEvents: [ev("A", "buy", 1000, "1")] });
+    expect(b.A.chipCount).toBeNull();
+    expect(b.A.chips).toBe(-1000);
+  });
+});
+
+describe("抜け番の提案", () => {
+  const G = (seq: number, ids: string[]): Game => ({
+    id: String(seq),
+    sessionId: "s",
+    seq,
+    rate: 60,
+    scores: [
+      { memberId: ids[0], score: 400 },
+      { memberId: ids[1], score: 350 },
+      { memberId: ids[2], score: 300 },
+    ],
+    createdAt: "",
+    updatedAt: "",
+    deletedAt: null,
+  });
+  const order = ["A", "B", "C", "D", "E"];
+  it("3人だけならそのまま", () => {
+    expect(suggestNext([G(1, ["A", "B", "C"])], order)?.sitOut).toEqual([]);
+  });
+  it("Dが途中参加したあと、A→B→C→D→A の順で抜ける回り方を続ける", () => {
+    const games = [G(1, ["A", "B", "C"]), G(2, ["A", "B", "C"]), G(3, ["B", "C", "D"])]; // 3半荘目はDが入りAが抜けた
+    expect(suggestNext(games, order)?.sitOut).toEqual(["B"]);
+    games.push(G(4, ["A", "C", "D"]));
+    expect(suggestNext(games, order)?.sitOut).toEqual(["C"]);
+    games.push(G(5, ["A", "B", "D"]));
+    expect(suggestNext(games, order)?.sitOut).toEqual(["D"]);
+    games.push(G(6, ["A", "B", "C"]));
+    expect(suggestNext(games, order)?.sitOut).toEqual(["A"]);
+  });
+  it("別の順番で回っていればその順番を読み取る", () => {
+    const games = [G(1, ["A", "B", "D"]), G(2, ["B", "C", "D"]), G(3, ["A", "B", "C"])]; // C→A→D の順で抜けた
+    expect(suggestNext(games, order)?.sitOut).toEqual(["B"]);
+    games.push(G(4, ["A", "C", "D"]));
+    expect(suggestNext(games, order)?.sitOut).toEqual(["C"]);
+  });
+  it("5人なら2人抜ける。精算済みで帰った人は候補から外す", () => {
+    const games = [G(1, ["A", "B", "C"]), G(2, ["C", "D", "E"]), G(3, ["A", "B", "E"])];
+    expect(suggestNext(games, order)?.sitOut.length).toBe(2);
+    expect(suggestNext(games, order, new Set(["E", "D"]))?.players.sort()).toEqual(["A", "B", "C"]);
   });
 });

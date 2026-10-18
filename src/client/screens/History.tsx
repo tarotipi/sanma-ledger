@@ -10,6 +10,8 @@ const KINDS: { v: string; label: string }[] = [
   { v: "games", label: "半荘" },
   { v: "chips", label: "チップ" },
   { v: "adjustments", label: "調整" },
+  { v: "chip_events", label: "バイイン・枚数" },
+  { v: "yakuman", label: "役満" },
   { v: "settlements", label: "精算" },
   { v: "sessions", label: "対局の設定" },
   { v: "members", label: "メンバー" },
@@ -96,6 +98,19 @@ function describe(log: AuditLog, state: GroupState): string[] {
       if (a.color !== b.color) out.push("色を変更");
       return out;
     }
+    case "chip_events": {
+      const x = (log.after ?? log.before ?? {}) as Any;
+      const what =
+        x.kind === "count"
+          ? `${name(x.memberId)} の手持ち枚数を ${String(x.amount)}枚 に`
+          : `${name(x.memberId)} が ${Number(x.amount).toLocaleString()}円分を${x.kind === "buy" ? "バイイン" : "返却"}`;
+      return log.action === "insert" ? [what] : [`記録を${ACTION[log.action]}：${what}`];
+    }
+    case "yakuman": {
+      const x = (log.after ?? log.before ?? {}) as Any;
+      const what = `${name(x.memberId)} の役満${x.name ? `（${String(x.name)}）` : ""}`;
+      return [log.action === "insert" ? `${what}を記録` : `${what}を${ACTION[log.action]}`];
+    }
     case "photos":
       return [`写真を${ACTION[log.action]}`];
     case "group":
@@ -116,6 +131,8 @@ function isDeletedNow(log: AuditLog, state: GroupState): boolean {
     settlements: state.settlements,
     photos: state.photos,
     sessions: state.sessions,
+    chip_events: state.chipEvents,
+    yakuman: state.yakuman,
   }[log.entity as string] as { id: string; deletedAt: string | null }[] | undefined;
   return !!table?.find((x) => x.id === log.entityId)?.deletedAt;
 }

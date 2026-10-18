@@ -46,6 +46,14 @@ export const BASE_SCHEMA = [
     BEGIN SELECT RAISE(ABORT, 'audit_logs is append-only'); END`,
   `CREATE TRIGGER IF NOT EXISTS audit_no_delete BEFORE DELETE ON audit_logs
     BEGIN SELECT RAISE(ABORT, 'audit_logs is append-only'); END`,
+  `CREATE TABLE IF NOT EXISTS chip_events (
+    id TEXT PRIMARY KEY, group_id TEXT NOT NULL, session_id TEXT NOT NULL, member_id TEXT NOT NULL,
+    kind TEXT NOT NULL, amount INTEGER NOT NULL, created_at TEXT NOT NULL, deleted_at TEXT)`,
+  `CREATE INDEX IF NOT EXISTS chip_events_group ON chip_events(group_id)`,
+  `CREATE TABLE IF NOT EXISTS yakuman (
+    id TEXT PRIMARY KEY, group_id TEXT NOT NULL, session_id TEXT NOT NULL, game_id TEXT, member_id TEXT NOT NULL,
+    name TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, deleted_at TEXT)`,
+  `CREATE INDEX IF NOT EXISTS yakuman_group ON yakuman(group_id)`,
   `CREATE TABLE IF NOT EXISTS join_attempts (
     group_id TEXT PRIMARY KEY, window_start INTEGER NOT NULL, failures INTEGER NOT NULL)`,
 ];

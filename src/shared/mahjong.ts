@@ -1,9 +1,4 @@
-import type {
-  Adjustment,
-  ChipEntry,
-  Game,
-  Score,
-} from "./types";
+import type { Adjustment, ChipEntry, ChipEvent, Game, Score } from "./types";
 
 /** ルールの数値。変更はここだけで行う */
 export const RULES = {
@@ -195,14 +190,19 @@ export type Balance = {
   memberId: string;
   games: number;
   mahjong: number;
+  /** チップ収支＝枚数×単価 − バイイン ＋ 返却（＋旧方式の増減記録） */
   chips: number;
+  chipBuy: number;
+  chipReturn: number;
+  /** 最後に数えた枚数。未入力なら null */
+  chipCount: number | null;
   external: number;
   internal: number;
   total: number;
 };
 
 export function emptyBalance(memberId: string): Balance {
-  return { memberId, games: 0, mahjong: 0, chips: 0, external: 0, internal: 0, total: 0 };
+  return { memberId, games: 0, mahjong: 0, chips: 0, chipBuy: 0, chipReturn: 0, chipCount: null, external: 0, internal: 0, total: 0 };
 }
 
 export function calcBalances(input: {
@@ -210,6 +210,7 @@ export function calcBalances(input: {
   chips: ChipEntry[];
   adjustments: Adjustment[];
   chipYen: number;
+  chipEvents?: ChipEvent[];
 }): Record<string, Balance> {
   const b: Record<string, Balance> = {};
   const get = (id: string) => b[id] ?? (b[id] = emptyBalance(id));
@@ -221,6 +222,18 @@ export function calcBalances(input: {
     }
   }
   for (const c of input.chips) for (const l of c.lines) get(l.memberId).chips += l.count * input.chipYen;
+  const latestCount = new Map<string, ChipEvent>();
+  for (const e of input.chipEvents ?? []) {
+    const x = get(e.memberId);
+    if (e.kind === "buy") x.chipBuy += e.amount;
+    else if (e.kind === "return") x.chipReturn += e.amount;
+    else {
+      const prev = latestCount.get(e.memberId);
+      if (!prev || prev.createdAt <= e.createdAt) latestCount.set(e.memberId, e);
+    }
+  }
+  for (const [id, e] of latestCount) get(id).chipCount = e.amount;
+  for (const x of Object.values(b)) x.chips += (x.chipCount ?? 0) * input.chipYen - x.chipBuy + x.chipReturn;
   for (const a of input.adjustments)
     for (const l of a.lines) {
       const x = get(l.memberId);
@@ -302,4 +315,62 @@ export function fmtYen(yen: number, withSign = true): string {
 
 export function fmtScore(score100: number): string {
   return `${score100 < 0 ? "−" : ""}${Math.abs(score100 * 100).toLocaleString("ja-JP")}`;
+}
+
+// ---------- 抜け番の提案 ----------
+
+/**
+ * 次の半荘の3人を提案する。games はそのセッションの削除済みを除いた半荘（順不同）。
+ * - いまいる人＝直近4半荘に出た人（精算済みで抜けた人は除く）
+ * - 抜ける順番：一度も抜けていない人が先（打った回数が多い順、同じなら memberOrder 順）、
+ *   次に、最後に抜けたのが古い人から。これで「a→b→c→d→a…」のような回り方をそのまま続けられる
+ */
+export function suggestNext(
+  games: Game[],
+  memberOrder: string[],
+  exclude: Set<string> = new Set(),
+): { players: string[]; sitOut: string[] } | null {
+  const sorted = [...games].sort((a, b) => a.seq - b.seq);
+  if (!sorted.length) return null;
+  const last = sorted[sorted.length - 1];
+  const present = new Set<string>();
+  sorted.slice(-4).forEach((g) => g.scores.forEach((s) => present.add(s.memberId)));
+  exclude.forEach((id) => present.delete(id));
+  const lastPlayers = last.scores.map((s) => s.memberId);
+  if (present.size < 3) return null;
+  if (present.size === 3) return { players: [...present], sitOut: [] };
+
+  const firstSeen = new Map<string, number>();
+  const lastOut = new Map<string, number>();
+  const played = new Map<string, number>();
+  for (const g of sorted) {
+    const inGame = new Set(g.scores.map((s) => s.memberId));
+    for (const id of inGame) {
+      if (!firstSeen.has(id)) firstSeen.set(id, g.seq);
+      played.set(id, (played.get(id) ?? 0) + 1);
+    }
+    for (const [id, first] of firstSeen) if (first < g.seq && !inGame.has(id)) lastOut.set(id, g.seq);
+  }
+  const order = (id: string) => {
+    const i = memberOrder.indexOf(id);
+    return i < 0 ? 999 : i;
+  };
+  const ranked = [...present].sort((a, b) => {
+    const la = lastOut.get(a);
+    const lb = lastOut.get(b);
+    if (la === undefined && lb === undefined)
+      return (played.get(b) ?? 0) - (played.get(a) ?? 0) || order(a) - order(b);
+    if (la === undefined) return -1;
+    if (lb === undefined) return 1;
+    return la - lb;
+  });
+  const sitOut = ranked.slice(0, present.size - 3);
+  const players = [...present]
+    .filter((id) => !sitOut.includes(id))
+    .sort((a, b) => {
+      const ia = lastPlayers.indexOf(a);
+      const ib = lastPlayers.indexOf(b);
+      return (ia < 0 ? 9 : ia) - (ib < 0 ? 9 : ib) || order(a) - order(b);
+    });
+  return { players, sitOut };
 }

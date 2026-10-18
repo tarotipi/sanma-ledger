@@ -77,6 +77,28 @@ export type Photo = {
   deletedAt: string | null;
 };
 
+/** チップの記録。buy＝バイイン（円）、return＝返却（円）、count＝手持ち枚数（最新の1件が有効） */
+export type ChipEventKind = "buy" | "return" | "count";
+export type ChipEvent = {
+  id: string;
+  sessionId: string;
+  memberId: string;
+  kind: ChipEventKind;
+  amount: number;
+  createdAt: string;
+  deletedAt: string | null;
+};
+
+export type Yakuman = {
+  id: string;
+  sessionId: string;
+  gameId: string | null;
+  memberId: string;
+  name: string;
+  createdAt: string;
+  deletedAt: string | null;
+};
+
 export type GroupState = {
   group: { id: string; name: string; hasCode: boolean; bg: string | null };
   members: Member[];
@@ -86,6 +108,8 @@ export type GroupState = {
   adjustments: Adjustment[];
   settlements: Settlement[];
   photos: Photo[];
+  chipEvents: ChipEvent[];
+  yakuman: Yakuman[];
   version: number;
 };
 
@@ -97,7 +121,9 @@ export type LogEntity =
   | "chips"
   | "adjustments"
   | "settlements"
-  | "photos";
+  | "photos"
+  | "chip_events"
+  | "yakuman";
 
 export type LogAction = "insert" | "update" | "delete" | "restore";
 

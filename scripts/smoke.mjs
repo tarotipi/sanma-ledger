@@ -75,6 +75,22 @@ ok((await call("GET", `/g/${g9.data.groupId}/games/${g1.data.id}/delete`, { toke
 ok((await call("POST", `/g/${g9.data.groupId}/games/${g1.data.id}/delete`, { token: g9.data.token })).status === 404, "他グループの半荘は削除できない");
 for (let i = 0; i < 10; i++) await call("POST", `/groups/${g9.data.groupId}/join`, { body: { code: "bad" } });
 ok((await call("POST", `/groups/${g9.data.groupId}/join`, { body: { code: "zzzz9999" } })).status === 429, "10回失敗で入室を一時停止");
+// バイイン・返却・枚数
+const ce = await call("POST", `/g/${gid}/chip-events`, { token: T, member: M, body: { sessionId: sid, memberIds: [A, B], kind: "buy", amount: 2000 } });
+ok(ce.status === 200 && ce.data.length === 2, "2人同時にバイイン");
+ok((await call("POST", `/g/${gid}/chip-events`, { token: T, member: M, body: { sessionId: sid, memberIds: [B], kind: "return", amount: 500 } })).status === 200, "返却");
+ok((await call("POST", `/g/${gid}/chip-events`, { token: T, member: M, body: { sessionId: sid, memberIds: [A], kind: "count", amount: 12 } })).status === 200, "枚数を入力");
+ok((await call("POST", `/g/${gid}/chip-events`, { token: T, member: M, body: { sessionId: sid, memberIds: [A, B], kind: "count", amount: 1 } })).status === 400, "枚数は1人ずつ");
+ok((await call("POST", `/g/${gid}/chip-events`, { token: T, member: M, body: { sessionId: sid, memberIds: [A], kind: "buy", amount: 0 } })).status === 400, "0円のバイインは400");
+ok((await call("POST", `/g/${gid}/chip_events/${ce.data[0].id}/delete`, { token: T, member: M })).status === 200, "バイインを削除");
+const yk = await call("POST", `/g/${gid}/yakuman`, { token: T, member: M, body: { sessionId: sid, gameId: g1.data.id, memberId: B, name: "国士無双" } });
+ok(yk.status === 200, "役満を記録");
+const yp = await call("POST", `/g/${gid}/photos?sessionId=${sid}&yakumanId=${yk.data.id}&w=1&h=1`, { token: T, member: M, raw: jpg, type: "image/jpeg" });
+ok(yp.status === 200 && yp.data.gameId === yk.data.id, "役満の記念写真");
+const st3 = (await call("GET", `/g/${gid}/state`, { token: T })).data;
+ok(st3.chipEvents.length === 4 && st3.chipEvents.filter((e) => e.deletedAt).length === 1, "stateにチップ記録");
+ok(st3.yakuman.length === 1 && st3.yakuman[0].name === "国士無双", "stateに役満");
+
 // 合言葉なしのグループ：名前だけで作成でき、URLだけで入れる
 const open = await call("POST", "/groups", { body: { members: ["x"] } });
 ok(open.status === 200 && open.data.name === "サンマ帳", "名前だけでグループ作成（グループ名は既定値）");

@@ -1,14 +1,13 @@
 import { useMemo, useState } from "react";
 import { liveGames, useGroup } from "../store";
 import { Confirm, Dot, Empty, Name, Sheet, Yen, fmtDateTime, type ConfirmSpec } from "../ui";
-import { calcGame, calcTransfers, fmtYen, splitFee, sumIsZero } from "../../shared/mahjong";
-import type { Adjustment, AdjustmentKind, ChipEntry, GroupState, Member } from "../../shared/types";
+import { calcGame, calcTransfers, fmtYen, splitFee } from "../../shared/mahjong";
+import type { Adjustment, AdjustmentKind, GroupState, Member } from "../../shared/types";
 import { downloadCsv, participants, sessionBalances, sessionOf, settledImpact } from "../logic";
 import { SettledWarning } from "./GameEditor";
 
 export function SettleView({ sid }: { sid: string }) {
   const { state, api, refresh, toast } = useGroup();
-  const [chipOpen, setChipOpen] = useState<{ open: boolean; entry: ChipEntry | null }>({ open: false, entry: null });
   const [adjOpen, setAdjOpen] = useState<{ open: boolean; entry: Adjustment | null }>({ open: false, entry: null });
   const [confirm, setConfirm] = useState<ConfirmSpec | null>(null);
   if (!state) return null;
@@ -20,7 +19,6 @@ export function SettleView({ sid }: { sid: string }) {
   const settled = new Map(
     state.settlements.filter((x) => x.sessionId === sid && !x.deletedAt).map((x) => [x.memberId, x]),
   );
-  const chips = state.chips.filter((c) => c.sessionId === sid && !c.deletedAt);
   const adjs = state.adjustments.filter((a) => a.sessionId === sid && !a.deletedAt);
   const rows = people
     .map((m) => ({ m, b: balances[m.id] }))
@@ -62,11 +60,8 @@ export function SettleView({ sid }: { sid: string }) {
     });
   };
 
-  const removeEntry = (kind: "chips" | "adjustments", id: string, label: string) => {
-    const next: GroupState =
-      kind === "chips"
-        ? { ...state, chips: state.chips.map((c) => (c.id === id ? { ...c, deletedAt: "x" } : c)) }
-        : { ...state, adjustments: state.adjustments.map((c) => (c.id === id ? { ...c, deletedAt: "x" } : c)) };
+  const removeEntry = (kind: "adjustments", id: string, label: string) => {
+    const next: GroupState = { ...state, adjustments: state.adjustments.map((c) => (c.id === id ? { ...c, deletedAt: "x" } : c)) };
     setConfirm({
       title: `${label}を削除しますか`,
       body: (
@@ -187,43 +182,7 @@ export function SettleView({ sid }: { sid: string }) {
         </section>
       )}
 
-      <section className="block">
-        <div className="block-head">
-          <h2>チップ（1枚 {session.chipYen.toLocaleString()}円）</h2>
-          <button type="button" className="btn small" onClick={() => setChipOpen({ open: true, entry: null })}>
-            ＋記録
-          </button>
-        </div>
-        {chips.length === 0 && <p className="note">チップの増減は、途中で抜ける人がいるときや最後にまとめて記録します。</p>}
-        <ul className="list entries">
-          {chips.map((c) => (
-            <li key={c.id}>
-              <div className="entry">
-                <small>
-                  {fmtDateTime(c.createdAt)} {c.memo}
-                </small>
-                <span className="entry-lines">
-                  {c.lines.map((l) => (
-                    <span key={l.memberId}>
-                      <Dot m={mm.get(l.memberId)} />
-                      {mm.get(l.memberId)?.name} {l.count > 0 ? "+" : "−"}
-                      {Math.abs(l.count)}枚
-                    </span>
-                  ))}
-                </span>
-              </div>
-              <span className="entry-actions">
-                <button type="button" className="btn small ghost" onClick={() => setChipOpen({ open: true, entry: c })}>
-                  編集
-                </button>
-                <button type="button" className="btn small ghost danger" onClick={() => removeEntry("chips", c.id, "チップの記録")}>
-                  削除
-                </button>
-              </span>
-            </li>
-          ))}
-        </ul>
-      </section>
+      <ChipSection sid={sid} />
 
       <section className="block">
         <div className="block-head">
@@ -266,7 +225,6 @@ export function SettleView({ sid }: { sid: string }) {
         精算をCSVで保存
       </button>
 
-      <ChipSheet sid={sid} open={chipOpen.open} entry={chipOpen.entry} onClose={() => setChipOpen({ open: false, entry: null })} />
       <AdjSheet sid={sid} open={adjOpen.open} entry={adjOpen.entry} onClose={() => setAdjOpen({ open: false, entry: null })} />
       <Confirm spec={confirm} onClose={() => setConfirm(null)} />
     </>
@@ -281,104 +239,6 @@ function usePeople(sid: string, showAll: boolean, extra: string[]) {
     const ids = new Set([...p.map((m) => m.id), ...extra]);
     return state.members.filter((m) => ids.has(m.id) || (showAll && !m.hidden));
   }, [state, sid, showAll, extra.join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
-}
-
-function ChipSheet({ sid, open, entry, onClose }: { sid: string; open: boolean; entry: ChipEntry | null; onClose: () => void }) {
-  const { state, api, refresh, toast } = useGroup();
-  const [counts, setCounts] = useState<Record<string, number>>({});
-  const [memo, setMemo] = useState("");
-  const [showAll, setShowAll] = useState(false);
-  const [confirm, setConfirm] = useState<ConfirmSpec | null>(null);
-  const [lastOpen, setLastOpen] = useState(false);
-  if (open !== lastOpen) {
-    setLastOpen(open);
-    if (open) {
-      setCounts(Object.fromEntries(entry?.lines.map((l) => [l.memberId, l.count]) ?? []));
-      setMemo(entry?.memo ?? "");
-      setShowAll(false);
-    }
-  }
-  const people = usePeople(sid, showAll, entry?.lines.map((l) => l.memberId) ?? []);
-  if (!state) return null;
-  const session = sessionOf(state, sid)!;
-  const values = Object.values(counts);
-  const sum = values.reduce((a, v) => a + v, 0);
-  const lines = Object.entries(counts)
-    .filter(([, v]) => v !== 0)
-    .map(([memberId, count]) => ({ memberId, count }));
-  const ok = lines.length >= 2 && sumIsZero(values);
-
-  const save = async () => {
-    const draft: ChipEntry = entry
-      ? { ...entry, lines, memo }
-      : { id: "draft", sessionId: sid, lines, memo, createdAt: "", deletedAt: null };
-    const next: GroupState = entry
-      ? { ...state, chips: state.chips.map((c) => (c.id === entry.id ? draft : c)) }
-      : { ...state, chips: [...state.chips, draft] };
-    const impact = settledImpact(state, next, sid);
-    const run = async () => {
-      try {
-        if (entry) await api("PATCH", `/chips/${entry.id}`, { lines, memo });
-        else await api("POST", "/chips", { sessionId: sid, lines, memo });
-        onClose();
-        toast("チップを記録しました");
-        await refresh();
-      } catch (e) {
-        toast(e instanceof Error ? e.message : "保存できませんでした。");
-      }
-    };
-    if (impact.length) {
-      setConfirm({ title: "精算済みの人がいます", body: <SettledWarning impact={impact} state={state} />, okLabel: "保存する", onOk: run });
-    } else await run();
-  };
-
-  return (
-    <>
-      <Sheet
-        open={open}
-        onClose={onClose}
-        title={entry ? "チップの記録を編集" : "チップを記録"}
-        footer={
-          <button type="button" className="btn primary wide" disabled={!ok} onClick={() => void save()}>
-            保存する
-          </button>
-        }
-      >
-        <p className="note">増えた枚数を＋、減った枚数を−で入れます。合計が0になると保存できます。</p>
-        <ul className="steppers">
-          {people.map((m) => {
-            const v = counts[m.id] ?? 0;
-            return (
-              <li key={m.id}>
-                <Name m={m} />
-                <span className="stepper">
-                  <button type="button" onClick={() => setCounts((c) => ({ ...c, [m.id]: v - 1 }))} aria-label={`${m.name}を1枚減らす`}>
-                    −
-                  </button>
-                  <output className={`num ${v > 0 ? "plus" : v < 0 ? "minus" : ""}`}>{v > 0 ? `+${v}` : v}</output>
-                  <button type="button" onClick={() => setCounts((c) => ({ ...c, [m.id]: v + 1 }))} aria-label={`${m.name}を1枚増やす`}>
-                    ＋
-                  </button>
-                </span>
-                <small className="num">{fmtYen(v * session.chipYen)}円</small>
-              </li>
-            );
-          })}
-        </ul>
-        {!showAll && (
-          <button type="button" className="btn small ghost" onClick={() => setShowAll(true)}>
-            ほかのメンバーも表示
-          </button>
-        )}
-        <p className={`total ${sum === 0 ? "good" : "bad"}`}>{sum === 0 ? "合計 0枚" : `合計 ${sum > 0 ? "+" : ""}${sum}枚（0にしてください）`}</p>
-        <label className="form">
-          メモ（任意）
-          <input value={memo} onChange={(e) => setMemo(e.target.value)} maxLength={100} placeholder="例：ドナーが抜けるので精算" />
-        </label>
-      </Sheet>
-      <Confirm spec={confirm} onClose={() => setConfirm(null)} />
-    </>
-  );
 }
 
 function AdjSheet({ sid, open, entry, onClose }: { sid: string; open: boolean; entry: Adjustment | null; onClose: () => void }) {
@@ -555,5 +415,256 @@ function AdjSheet({ sid, open, entry, onClose }: { sid: string; open: boolean; e
       </Sheet>
       <Confirm spec={confirm} onClose={() => setConfirm(null)} />
     </>
+  );
+}
+
+function ChipSection({ sid }: { sid: string }) {
+  const { state, api, refresh, toast } = useGroup();
+  const [open, setOpen] = useState(false);
+  const [counts, setCounts] = useState<Record<string, string>>({});
+  const [confirm, setConfirm] = useState<ConfirmSpec | null>(null);
+  if (!state) return null;
+  const session = sessionOf(state, sid)!;
+  const price = session.chipYen;
+  const balances = sessionBalances(state, sid);
+  const people = participants(state, sid).filter((m) => !m.hidden || balances[m.id]);
+  const mm = new Map(state.members.map((m) => [m.id, m]));
+  const events = state.chipEvents
+    .filter((e) => e.sessionId === sid && !e.deletedAt && e.kind !== "count")
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const buyers = people.filter((m) => (balances[m.id]?.chipBuy ?? 0) > 0 || balances[m.id]?.chipCount != null);
+  const missing = buyers.filter((m) => balances[m.id]?.chipCount == null);
+  const counted = buyers.reduce((a, m) => a + (balances[m.id]?.chipCount ?? 0) * price, 0);
+  const net = buyers.reduce((a, m) => a + (balances[m.id]?.chipBuy ?? 0) - (balances[m.id]?.chipReturn ?? 0), 0);
+
+  const saveCount = async (memberId: string, text: string) => {
+    if (text === "") return;
+    const n = Number(text);
+    if (!Number.isInteger(n) || n < 0) return toast("枚数は0以上の整数で入れてください。");
+    if (balances[memberId]?.chipCount === n) return;
+    try {
+      await api("POST", "/chip-events", { sessionId: sid, memberIds: [memberId], kind: "count", amount: n });
+      toast(`${mm.get(memberId)?.name}さんの枚数を${n}枚にしました`);
+      await refresh();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "保存できませんでした。");
+    }
+  };
+
+  return (
+    <section className="block">
+      <div className="block-head">
+        <h2>チップ（1枚 {price.toLocaleString()}円）</h2>
+        <button type="button" className="btn small" onClick={() => setOpen(true)}>
+          ＋バイイン・返却
+        </button>
+      </div>
+      {buyers.length === 0 ? (
+        <p className="note">チップを買ったら「＋バイイン・返却」で記録します。最後（または途中で抜けるとき）に手持ちの枚数を入れると、チップの収支が出ます。</p>
+      ) : (
+        <>
+          <div className="tbl-scroll">
+            <table className="tbl chips-tbl">
+              <thead>
+                <tr>
+                  <th className="sticky">名前</th>
+                  <th>購入</th>
+                  <th>返却</th>
+                  <th>枚数</th>
+                  <th>収支</th>
+                </tr>
+              </thead>
+              <tbody>
+                {buyers.map((m) => {
+                  const b = balances[m.id];
+                  const cur = counts[m.id] ?? (b.chipCount == null ? "" : String(b.chipCount));
+                  return (
+                    <tr key={m.id}>
+                      <td className="sticky">
+                        <Name m={m} />
+                      </td>
+                      <td className="num">{b.chipBuy ? `−${b.chipBuy.toLocaleString()}` : "—"}</td>
+                      <td className="num">{b.chipReturn ? `+${b.chipReturn.toLocaleString()}` : "—"}</td>
+                      <td>
+                        <input
+                          className="count-input"
+                          inputMode="numeric"
+                          value={cur}
+                          placeholder="未入力"
+                          aria-label={`${m.name}の手持ち枚数`}
+                          onChange={(e) => setCounts((c) => ({ ...c, [m.id]: e.target.value.replace(/\D/g, "") }))}
+                          onBlur={() => void saveCount(m.id, cur)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                          }}
+                        />
+                      </td>
+                      <td className="num">{b.chipCount == null ? "—" : <Yen v={b.chips} />}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          {missing.length > 0 ? (
+            <p className="note">枚数が未入力：{missing.map((m) => m.name).join("、")}（未入力の人は0枚として計算しています）</p>
+          ) : counted !== net ? (
+            <div className="warn">
+              <strong>チップの合計が合いません</strong>
+              <p>
+                数えた枚数は合計 {(counted / price).toLocaleString()}枚（{counted.toLocaleString()}円分）、購入−返却は {net.toLocaleString()}円分です。
+                {fmtYen(counted - net)}円分ずれています。枚数か購入額を確認してください。
+              </p>
+            </div>
+          ) : (
+            <p className="note good-text">チップの合計は合っています。</p>
+          )}
+        </>
+      )}
+      {events.length > 0 && (
+        <ul className="list entries">
+          {events.map((e) => (
+            <li key={e.id}>
+              <div className="entry">
+                <small>{fmtDateTime(e.createdAt)}</small>
+                <span className="entry-lines">
+                  <span>
+                    <Dot m={mm.get(e.memberId)} />
+                    {mm.get(e.memberId)?.name}　{e.kind === "buy" ? "バイイン" : "返却"} {e.amount.toLocaleString()}円（{Math.round(e.amount / price)}枚）
+                  </span>
+                </span>
+              </div>
+              <span className="entry-actions">
+                <button
+                  type="button"
+                  className="btn small ghost danger"
+                  onClick={() =>
+                    setConfirm({
+                      title: "この記録を削除しますか",
+                      body: <p>削除した記録は履歴から元に戻せます。</p>,
+                      okLabel: "削除する",
+                      danger: true,
+                      onOk: async () => {
+                        try {
+                          await api("POST", `/chip_events/${e.id}/delete`);
+                          toast("削除しました");
+                          await refresh();
+                        } catch (err) {
+                          toast(err instanceof Error ? err.message : "削除できませんでした。");
+                        }
+                      },
+                    })
+                  }
+                >
+                  削除
+                </button>
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      <BuySheet sid={sid} open={open} onClose={() => setOpen(false)} />
+      <Confirm spec={confirm} onClose={() => setConfirm(null)} />
+    </section>
+  );
+}
+
+function BuySheet({ sid, open, onClose }: { sid: string; open: boolean; onClose: () => void }) {
+  const { state, api, refresh, toast } = useGroup();
+  const [kind, setKind] = useState<"buy" | "return">("buy");
+  const [who, setWho] = useState<string[]>([]);
+  const [amount, setAmount] = useState("");
+  const [showAll, setShowAll] = useState(false);
+  const [lastOpen, setLastOpen] = useState(false);
+  if (open !== lastOpen) {
+    setLastOpen(open);
+    if (open) {
+      setKind("buy");
+      setWho([]);
+      setShowAll(false);
+      const last = state?.chipEvents.filter((e) => e.sessionId === sid && e.kind === "buy" && !e.deletedAt).at(-1);
+      setAmount(last ? String(last.amount) : "");
+    }
+  }
+  const people = usePeople(sid, showAll, []);
+  if (!state) return null;
+  const price = sessionOf(state, sid)!.chipYen;
+  const yen = Number(amount);
+  const ok = who.length > 0 && Number.isInteger(yen) && yen > 0;
+  const presets = [10, 20, 30, 50].map((n) => n * price);
+
+  return (
+    <Sheet
+      open={open}
+      onClose={onClose}
+      title={kind === "buy" ? "バイインを記録" : "返却を記録"}
+      footer={
+        <button
+          type="button"
+          className="btn primary wide"
+          disabled={!ok}
+          onClick={async () => {
+            try {
+              await api("POST", "/chip-events", { sessionId: sid, memberIds: who, kind, amount: yen });
+              onClose();
+              toast(kind === "buy" ? "バイインを記録しました" : "返却を記録しました");
+              await refresh();
+            } catch (e) {
+              toast(e instanceof Error ? e.message : "保存できませんでした。");
+            }
+          }}
+        >
+          記録する
+        </button>
+      }
+    >
+      <div className="seg">
+        <button type="button" className={kind === "buy" ? "on" : ""} onClick={() => setKind("buy")}>
+          バイイン（買う）
+        </button>
+        <button type="button" className={kind === "return" ? "on" : ""} onClick={() => setKind("return")}>
+          返却（返す）
+        </button>
+      </div>
+      <p className="note">
+        {kind === "buy"
+          ? "チップを買った人を選びます。最初に配る分もバイインとして記録します。複数人を選ぶと、全員に同じ額が入ります。"
+          : "増えすぎたチップを返した人を選びます。返した額だけ、その人の借りが減ります。"}
+      </p>
+      <div className="chips">
+        {people.map((m) => {
+          const on = who.includes(m.id);
+          return (
+            <button
+              key={m.id}
+              type="button"
+              className={`chip ${on ? "on" : ""}`}
+              aria-pressed={on}
+              onClick={() => setWho((w) => (on ? w.filter((x) => x !== m.id) : [...w, m.id]))}
+            >
+              <Dot m={m} />
+              {m.name}
+            </button>
+          );
+        })}
+        {!showAll && (
+          <button type="button" className="btn small ghost" onClick={() => setShowAll(true)}>
+            ほかの人
+          </button>
+        )}
+      </div>
+      <label className="form" style={{ marginTop: 14 }}>
+        金額（円）
+        <input inputMode="numeric" value={amount} onChange={(e) => setAmount(e.target.value.replace(/\D/g, ""))} placeholder="例：2000" />
+        {yen > 0 && <small>{(yen / price).toLocaleString()}枚分</small>}
+      </label>
+      <div className="chips" style={{ marginTop: 8 }}>
+        {presets.map((p) => (
+          <button key={p} type="button" className="chip" onClick={() => setAmount(String(p))}>
+            {p.toLocaleString()}円
+          </button>
+        ))}
+      </div>
+    </Sheet>
   );
 }

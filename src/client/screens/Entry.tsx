@@ -259,6 +259,9 @@ export function GroupHome() {
           <button type="button" className="btn ghost" onClick={() => navigate(`/g/${gid}/stats`)}>
             通算成績
           </button>
+          <button type="button" className="btn ghost" onClick={() => navigate(`/g/${gid}/yakuman`)}>
+            役満の殿堂
+          </button>
           <button type="button" className="btn ghost" onClick={() => navigate(`/g/${gid}/history`)}>
             履歴
           </button>
