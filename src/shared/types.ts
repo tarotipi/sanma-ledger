@@ -78,7 +78,7 @@ export type Photo = {
 };
 
 export type GroupState = {
-  group: { id: string; name: string };
+  group: { id: string; name: string; hasCode: boolean; bg: string | null };
   members: Member[];
   sessions: Session[];
   games: Game[];

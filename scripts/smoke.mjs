@@ -75,6 +75,25 @@ ok((await call("GET", `/g/${g9.data.groupId}/games/${g1.data.id}/delete`, { toke
 ok((await call("POST", `/g/${g9.data.groupId}/games/${g1.data.id}/delete`, { token: g9.data.token })).status === 404, "他グループの半荘は削除できない");
 for (let i = 0; i < 10; i++) await call("POST", `/groups/${g9.data.groupId}/join`, { body: { code: "bad" } });
 ok((await call("POST", `/groups/${g9.data.groupId}/join`, { body: { code: "zzzz9999" } })).status === 429, "10回失敗で入室を一時停止");
+// 合言葉なしのグループ：名前だけで作成でき、URLだけで入れる
+const open = await call("POST", "/groups", { body: { members: ["x"] } });
+ok(open.status === 200 && open.data.name === "サンマ帳", "名前だけでグループ作成（グループ名は既定値）");
+const pub = await call("GET", `/groups/${open.data.groupId}/public`);
+ok(pub.data.needsCode === false, "合言葉なしと判定");
+const oj = await call("POST", `/groups/${open.data.groupId}/join`, { body: {} });
+ok(oj.status === 200 && oj.data.token, "合言葉なしで入室");
+const OT = oj.data.token;
+ok((await call("PATCH", `/g/${open.data.groupId}`, { token: OT, body: { code: "abcd" } })).status === 200, "あとから合言葉を設定");
+ok((await call("GET", `/groups/${open.data.groupId}/public`)).data.needsCode === true, "合言葉ありに変わる");
+ok((await call("POST", `/groups/${open.data.groupId}/join`, { body: { code: "" } })).status === 401, "合言葉なしでは入れなくなる");
+ok((await call("PATCH", `/g/${open.data.groupId}`, { token: OT, body: { code: "" } })).status === 200, "合言葉をなしに戻す");
+const bg = await call("PUT", `/g/${open.data.groupId}/background`, { token: OT, raw: jpg, type: "image/jpeg" });
+ok(bg.status === 200 && bg.data.bg, "背景写真を設定");
+const st2 = (await call("GET", `/g/${open.data.groupId}/state`, { token: OT })).data;
+ok(st2.group.bg === bg.data.bg && st2.group.hasCode === false, "stateに背景と合言葉の有無");
+const bgf = await fetch(`${base}/api/g/${open.data.groupId}/background?t=${encodeURIComponent(OT)}`);
+ok(bgf.status === 200, "背景写真の取得");
+ok((await call("DELETE", `/g/${open.data.groupId}/background`, { token: OT })).status === 200, "背景を消す");
 console.log(fails ? `\n${fails}件失敗` : "\nすべて成功");
 console.log("GID", gid, "TOKEN", T, "MEMBER", M, "SID", sid);
 process.exit(fails ? 1 : 0);

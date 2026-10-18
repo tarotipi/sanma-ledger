@@ -1127,3 +1127,18 @@ dialog.sheet[open] {
   opacity: 1;
   transform: translate(-50%, 0);
 }
+
+/* ---- 背景写真 ---- */
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background-size: cover;
+  background-position: center;
+}
+.backdrop::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--bg) 80%, transparent);
+}

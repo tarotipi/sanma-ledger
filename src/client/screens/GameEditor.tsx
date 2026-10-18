@@ -4,7 +4,6 @@ import { Confirm, Dot, Name, Sheet, Yen, type ConfirmSpec } from "../ui";
 import { RULES, calcGame, fmtPt, fmtScore, tieGroups, validateGame } from "../../shared/mahjong";
 import type { Game, GroupState, Score } from "../../shared/types";
 import { settledImpact } from "../logic";
-import { uploadPhoto } from "./Photos";
 
 type Slot = { memberId: string; text: string; neg: boolean; auto: boolean };
 
@@ -99,13 +98,11 @@ export function GameEditor({
   const { state, api, refresh, patchState, toast } = useGroup();
   const [slots, setSlots] = useState<Slot[]>([]);
   const [ties, setTies] = useState<Record<string, number>>({});
-  const [files, setFiles] = useState<File[]>([]);
   const [confirm, setConfirm] = useState<ConfirmSpec | null>(null);
   const session = state?.sessions.find((s) => s.id === sessionId);
 
   useEffect(() => {
     if (!open || !state) return;
-    setFiles([]);
     if (game) {
       setSlots(game.scores.map((s) => ({ memberId: s.memberId, text: String(Math.abs(s.score)), neg: s.score < 0, auto: false })));
       const t: Record<string, number> = {};
@@ -191,7 +188,6 @@ export function GameEditor({
     const impact = settledImpact(state, nextState, sessionId);
 
     const run = async () => {
-      const pendingFiles = files;
       patchState(() => nextState);
       onClose();
       try {
@@ -200,7 +196,6 @@ export function GameEditor({
           : await api<Game>("POST", "/games", { sessionId, scores });
         patchState((s) => ({ ...s, games: s.games.map((g) => (g.id === after.id ? saved : g)) }));
         toast(game ? `第${saved.seq}半荘を変更しました` : `第${saved.seq}半荘を記録しました`);
-        for (const f of pendingFiles) await uploadPhoto(api, f, sessionId, saved.id);
       } catch (e) {
         toast(e instanceof Error ? e.message : "保存できませんでした。");
       } finally {
@@ -356,13 +351,6 @@ export function GameEditor({
                     ))}
                   </tbody>
                 </table>
-              )}
-
-              {!game && (
-                <label className="file-pick">
-                  <input type="file" accept="image/*" multiple onChange={(e) => setFiles([...(e.target.files ?? [])])} />
-                  {files.length ? `写真 ${files.length}枚を一緒に保存` : "写真を付ける（任意）"}
-                </label>
               )}
             </>
           )}

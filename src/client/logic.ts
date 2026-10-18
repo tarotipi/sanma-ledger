@@ -39,8 +39,8 @@ export function settledImpact(before: GroupState, after: GroupState, sid: string
     .filter((x) => x.recorded !== x.next);
 }
 
-export function photoUrl(gid: string, token: string, photoId: string): string {
-  return `/api/g/${gid}/photos/${photoId}/file?t=${encodeURIComponent(token)}`;
+export function bgUrl(gid: string, token: string, version: string): string {
+  return `/api/g/${gid}/background?t=${encodeURIComponent(token)}&v=${version}`;
 }
 
 export function downloadCsv(filename: string, rows: (string | number)[][]): void {

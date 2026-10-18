@@ -6,6 +6,7 @@ import { StatsView } from "./screens/Stats";
 import { HistoryView } from "./screens/History";
 import { SettingsView } from "./screens/Settings";
 import { Empty } from "./ui";
+import { bgUrl } from "./logic";
 
 export function App() {
   const { path } = usePath();
@@ -41,6 +42,20 @@ function GroupGate({ route }: { route: Exclude<ReturnType<typeof parseRoute>, { 
         )}
       </main>
     );
+  const backdrop = state.group.bg ? (
+    <div className="backdrop" style={{ backgroundImage: `url(${bgUrl(gid, saved.token, state.group.bg)})` }} aria-hidden />
+  ) : null;
+  return (
+    <>
+      {backdrop}
+      <GroupScreen route={route} />
+    </>
+  );
+}
+
+function GroupScreen({ route }: { route: Exclude<ReturnType<typeof parseRoute>, { name: "home" }> }) {
+  const { saved, state, gid } = useGroup();
+  if (!saved || !state) return null;
   if (!saved.memberId || !state.members.some((m) => m.id === saved.memberId)) return <PickMember />;
   if (route.name === "session") return <SessionScreen sid={route.sid} tab={route.tab} />;
   if (route.name === "groupTab") {

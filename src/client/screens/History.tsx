@@ -13,7 +13,6 @@ const KINDS: { v: string; label: string }[] = [
   { v: "settlements", label: "精算" },
   { v: "sessions", label: "対局の設定" },
   { v: "members", label: "メンバー" },
-  { v: "photos", label: "写真" },
   { v: "group", label: "グループ" },
 ];
 
@@ -101,7 +100,8 @@ function describe(log: AuditLog, state: GroupState): string[] {
       return [`写真を${ACTION[log.action]}`];
     case "group":
       if (log.action === "insert") return [`グループ「${String(a.name)}」を作成`];
-      if (a.code) return ["合言葉を変更"];
+      if (a.code) return [String(a.code).includes("なし") ? "合言葉をなしにした" : "合言葉を変更"];
+      if (a.background) return [String(a.background).replace(/[()（）]/g, "")];
       return [`グループ名 ${String(b.name)} → ${String(a.name)}`];
     default:
       return [`${log.entity}を${ACTION[log.action]}`];

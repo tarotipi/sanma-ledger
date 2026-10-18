@@ -1,10 +1,10 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { forgetGroup } from "../api";
 import { navigate } from "../router";
 import { gamesInOrder, useGroup } from "../store";
 import { Confirm, Dot, Sheet, Yen, type ConfirmSpec } from "../ui";
 import { RULES, calcGame } from "../../shared/mahjong";
-import { downloadCsv, sessionBalances, sessionOf } from "../logic";
+import { downloadCsv, resizeImage, sessionBalances, sessionOf } from "../logic";
 import type { Member } from "../../shared/types";
 
 const PALETTE = ["#2F7D5B", "#C0392B", "#2E5E9E", "#B7791F", "#7A4FA0", "#1F8A8A", "#A0466B", "#5C6B2E", "#4A4A4A", "#D35400"];
@@ -321,15 +321,31 @@ function GroupSettings() {
   const { state, gid, api, refresh, toast } = useGroup();
   const [name, setName] = useState(state?.group.name ?? "");
   const [code, setCode] = useState("");
+  const [busy, setBusy] = useState(false);
+  const file = useRef<HTMLInputElement>(null);
   if (!state) return null;
   const url = `${location.origin}/g/${gid}`;
+  const run = async (fn: () => Promise<unknown>, msg: string) => {
+    try {
+      await fn();
+      toast(msg);
+      await refresh();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "保存できませんでした。");
+    }
+  };
   return (
     <section className="block">
       <h2>グループ</h2>
       <div className="form">
         <label>
-          招待URL（合言葉と一緒にメンバーへ送ります）
+          招待URL
           <input value={url} readOnly onFocus={(e) => e.target.select()} />
+          <small>
+            {state.group.hasCode
+              ? "合言葉と一緒に送ってください。"
+              : "合言葉なし：このURLを知っている人は誰でも入れます。"}
+          </small>
         </label>
         <button
           type="button"
@@ -348,6 +364,39 @@ function GroupSettings() {
         >
           URLを送る
         </button>
+
+        <label>
+          背景の写真
+          <small>アプリ全体の背景に表示します。グループの全員に同じ写真が出ます。</small>
+        </label>
+        <div className="row-between">
+          <button type="button" className="btn" disabled={busy} onClick={() => file.current?.click()}>
+            {busy ? "送信中…" : state.group.bg ? "写真を変える" : "写真を選ぶ"}
+          </button>
+          {state.group.bg && (
+            <button type="button" className="btn ghost danger" onClick={() => void run(() => api("DELETE", "/background"), "背景を消しました")}>
+              背景を消す
+            </button>
+          )}
+        </div>
+        <input
+          ref={file}
+          type="file"
+          accept="image/*"
+          hidden
+          onChange={async (e) => {
+            const f = e.target.files?.[0];
+            e.target.value = "";
+            if (!f) return;
+            setBusy(true);
+            await run(async () => {
+              const { blob } = await resizeImage(f, 1600);
+              await api("PUT", "/background", undefined, { raw: blob });
+            }, "背景を変えました");
+            setBusy(false);
+          }}
+        />
+
         <label>
           グループ名
           <input value={name} onChange={(e) => setName(e.target.value)} maxLength={40} />
@@ -355,40 +404,32 @@ function GroupSettings() {
         <button
           type="button"
           className="btn"
-          disabled={name === state.group.name}
-          onClick={async () => {
-            try {
-              await api("PATCH", "", { name });
-              toast("グループ名を変更しました");
-              await refresh();
-            } catch (e) {
-              toast(e instanceof Error ? e.message : "保存できませんでした。");
-            }
-          }}
+          disabled={!name.trim() || name === state.group.name}
+          onClick={() => void run(() => api("PATCH", "", { name }), "グループ名を変更しました")}
         >
           グループ名を変更
         </button>
+
         <label>
-          新しい合言葉（4文字以上）
-          <input value={code} onChange={(e) => setCode(e.target.value)} minLength={4} maxLength={64} />
-          <small>変えても、すでに入室している端末はそのまま使えます。</small>
+          合言葉{state.group.hasCode ? "（設定済み）" : "（なし）"}
+          <input value={code} onChange={(e) => setCode(e.target.value)} minLength={4} maxLength={64} placeholder="4文字以上" />
+          <small>設定すると、新しく入る人は合言葉が必要になります。すでに入っている端末はそのまま使えます。</small>
         </label>
-        <button
-          type="button"
-          className="btn"
-          disabled={code.length < 4}
-          onClick={async () => {
-            try {
-              await api("PATCH", "", { code });
-              setCode("");
-              toast("合言葉を変更しました");
-            } catch (e) {
-              toast(e instanceof Error ? e.message : "保存できませんでした。");
-            }
-          }}
-        >
-          合言葉を変更
-        </button>
+        <div className="row-between">
+          <button
+            type="button"
+            className="btn"
+            disabled={code.length < 4}
+            onClick={() => void run(() => api("PATCH", "", { code }), "合言葉を設定しました").then(() => setCode(""))}
+          >
+            合言葉を設定
+          </button>
+          {state.group.hasCode && (
+            <button type="button" className="btn ghost" onClick={() => void run(() => api("PATCH", "", { code: "" }), "合言葉をなしにしました")}>
+              合言葉をなしにする
+            </button>
+          )}
+        </div>
       </div>
     </section>
   );

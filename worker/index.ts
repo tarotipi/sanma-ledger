@@ -266,13 +266,14 @@ async function memberIds(c: C): Promise<Set<string>> {
 app.post("/api/groups", async (c) => {
   const secret = await init(c.env);
   const b = await body<{ name: unknown; code: unknown; members: unknown }>(c);
-  const name = str(b.name, "グループ名", 40);
-  const code = str(b.code, "合言葉", 64);
-  if (code.length < 4) throw new HttpError(400, "合言葉は4文字以上にしてください。");
+  // グループ名と合言葉は省略可（あとで設定画面から変えられる）
+  const name = typeof b.name === "string" && b.name.trim() ? str(b.name, "グループ名", 40) : "サンマ帳";
+  const code = typeof b.code === "string" ? b.code.trim() : "";
+  if (code && code.length < 4) throw new HttpError(400, "合言葉は4文字以上にしてください。");
   const names = Array.isArray(b.members)
     ? [...new Set(b.members.map((m) => str(m, "メンバー名", 20)).filter(Boolean))]
     : [];
-  if (names.length < 3) throw new HttpError(400, "メンバーを3人以上入力してください。");
+  if (names.length < 1) throw new HttpError(400, "名前を1人以上入力してください。");
   if (names.length > 30) throw new HttpError(400, "メンバーは30人までです。");
   const id = uid();
   const salt = uid();
@@ -286,7 +287,7 @@ app.post("/api/groups", async (c) => {
       id,
       name,
       salt,
-      await hashCode(code, salt),
+      code ? await hashCode(code, salt) : "",
       t,
     ),
     audit(fake, "group", id, "insert", null, { name }, actor),
@@ -310,9 +311,9 @@ app.post("/api/groups", async (c) => {
 });
 
 app.get("/api/groups/:gid/public", async (c) => {
-  const g = await c.env.DB.prepare(`SELECT name FROM groups WHERE id=?`).bind(c.req.param("gid")).first<Row>();
+  const g = await c.env.DB.prepare(`SELECT name, join_hash FROM groups WHERE id=?`).bind(c.req.param("gid")).first<Row>();
   if (!g) throw new HttpError(404, "グループが見つかりません。URLを確認してください。");
-  return c.json({ name: g.name });
+  return c.json({ name: g.name, needsCode: !!g.join_hash });
 });
 
 app.post("/api/groups/:gid/join", async (c) => {
@@ -325,6 +326,7 @@ app.post("/api/groups/:gid/join", async (c) => {
   const inWindow = att && nowSec - Number(att.window_start) < 600;
   if (inWindow && Number(att.failures) >= 10)
     throw new HttpError(429, "合言葉を10回間違えたため、10分間入室できません。");
+  if (!g.join_hash) return c.json({ token: await issueToken(secret, gid), name: g.name });
   const b = await body<{ code: unknown }>(c);
   const code = typeof b.code === "string" ? b.code.trim() : "";
   const ok = safeEqual(await hashCode(code, String(g.join_salt)), String(g.join_hash));
@@ -377,7 +379,10 @@ app.get("/api/g/:gid/state", async (c) => {
   const gid = c.get("actor").groupId;
   const q = (sql: string) => c.env.DB.prepare(sql).bind(gid);
   const [g, members, sessions, games, chips, adj, settle, photos, v] = await c.env.DB.batch<Row>([
-    q(`SELECT id, name FROM groups WHERE id=?`),
+    c.env.DB.prepare(
+      `SELECT g.id, g.name, g.join_hash != '' AS has_code, (SELECT value FROM meta WHERE key = 'bg:' || g.id) AS bg
+       FROM groups g WHERE g.id=?`,
+    ).bind(gid),
     q(`SELECT * FROM members WHERE group_id=? ORDER BY sort, created_at`),
     q(`SELECT * FROM sessions WHERE group_id=? ORDER BY played_on DESC, created_at DESC`),
     q(`SELECT * FROM games WHERE group_id=? ORDER BY session_id, seq`),
@@ -387,9 +392,10 @@ app.get("/api/g/:gid/state", async (c) => {
     q(`SELECT * FROM photos WHERE group_id=? ORDER BY created_at`),
     q(`SELECT COALESCE(MAX(id),0) AS v FROM audit_logs WHERE group_id=?`),
   ]);
-  if (!g.results[0]) throw new HttpError(404, "グループが見つかりません。");
+  const gr = g.results[0];
+  if (!gr) throw new HttpError(404, "グループが見つかりません。");
   return c.json({
-    group: g.results[0],
+    group: { id: gr.id, name: gr.name, hasCode: gr.has_code === 1, bg: gr.bg ? String(gr.bg) : null },
     members: members.results.map(mapMember),
     sessions: sessions.results.map(mapSession),
     games: games.results.map(mapGame),
@@ -450,16 +456,57 @@ app.patch("/api/g/:gid", async (c) => {
     );
   }
   if (b.code !== undefined) {
-    const code = str(b.code, "合言葉", 64);
-    if (code.length < 4) throw new HttpError(400, "合言葉は4文字以上にしてください。");
+    const code = str(b.code, "合言葉", 64, true);
+    if (code && code.length < 4) throw new HttpError(400, "合言葉は4文字以上にしてください。");
     const salt = uid();
     stmts.push(
-      c.env.DB.prepare(`UPDATE groups SET join_salt=?, join_hash=? WHERE id=?`).bind(salt, await hashCode(code, salt), gid),
-      audit(c, "group", gid, "update", { code: "(変更前)" }, { code: "(合言葉を変更)" }),
+      c.env.DB.prepare(`UPDATE groups SET join_salt=?, join_hash=? WHERE id=?`).bind(
+        salt,
+        code ? await hashCode(code, salt) : "",
+        gid,
+      ),
+      audit(c, "group", gid, "update", { code: "(変更前)" }, { code: code ? "(合言葉を変更)" : "(合言葉をなしに)" }),
     );
   }
   if (stmts.length) await c.env.DB.batch(stmts);
   return c.json({ ok: true });
+});
+
+// 背景写真（グループごとに1枚。画像はKV、版番号は meta テーブル）
+app.put("/api/g/:gid/background", async (c) => {
+  const gid = c.get("actor").groupId;
+  const type = c.req.header("content-type") ?? "";
+  if (!/^image\/(jpeg|png|webp)$/.test(type)) throw new HttpError(400, "画像ファイルを選んでください。");
+  const buf = await c.req.arrayBuffer();
+  if (buf.byteLength === 0) throw new HttpError(400, "画像が空です。");
+  if (buf.byteLength > 4 * 1024 * 1024) throw new HttpError(413, "画像が大きすぎます（4MBまで）。");
+  const v = uid().slice(0, 8);
+  await c.env.PHOTOS.put(`${gid}/background`, buf, { metadata: { type } });
+  await c.env.DB.batch([
+    c.env.DB.prepare(`INSERT INTO meta(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`).bind(
+      `bg:${gid}`,
+      v,
+    ),
+    audit(c, "group", gid, "update", { background: "(変更前)" }, { background: "(背景写真を変更)" }),
+  ]);
+  return c.json({ bg: v });
+});
+
+app.delete("/api/g/:gid/background", async (c) => {
+  const gid = c.get("actor").groupId;
+  await c.env.DB.batch([
+    c.env.DB.prepare(`INSERT INTO meta(key, value) VALUES (?, '') ON CONFLICT(key) DO UPDATE SET value=''`).bind(`bg:${gid}`),
+    audit(c, "group", gid, "update", { background: "(変更前)" }, { background: "(背景写真を消した)" }),
+  ]);
+  return c.json({ bg: null });
+});
+
+app.get("/api/g/:gid/background", async (c) => {
+  const obj = await c.env.PHOTOS.getWithMetadata<{ type: string }>(`${c.get("actor").groupId}/background`, "arrayBuffer");
+  if (!obj.value) throw new HttpError(404, "背景写真はありません。");
+  return new Response(obj.value, {
+    headers: { "content-type": obj.metadata?.type ?? "image/jpeg", "cache-control": "private, max-age=31536000, immutable" },
+  });
 });
 
 async function getRowGroup(c: C, gid: string): Promise<Row> {

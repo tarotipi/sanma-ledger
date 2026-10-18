@@ -6,7 +6,6 @@ import { calcGame, fmtPt, fmtScore } from "../../shared/mahjong";
 import type { Game } from "../../shared/types";
 import { participants, sessionBalances, sessionOf, settledImpact } from "../logic";
 import { DiffTable, GameEditor, SettledWarning, isFreeEdit } from "./GameEditor";
-import { PhotoStrip } from "./Photos";
 import { StatsView } from "./Stats";
 import { SettleView } from "./Settle";
 import { HistoryView } from "./History";
@@ -102,7 +101,6 @@ function RecordView({ sid }: { sid: string }) {
   if (!state) return null;
   const games = liveGames(state, sid).sort((a, b) => b.seq - a.seq);
   const mm = new Map(state.members.map((m) => [m.id, m]));
-  const photoGames = new Set(state.photos.filter((p) => !p.deletedAt && p.gameId).map((p) => p.gameId));
 
   return (
     <>
@@ -125,7 +123,6 @@ function RecordView({ sid }: { sid: string }) {
                     <b>{g.seq}</b>
                     <small>{fmtDateTime(g.createdAt).split(" ")[1]}</small>
                     {edited && <em className="tag">変更</em>}
-                    {photoGames.has(g.id) && <em className="tag">写真</em>}
                   </span>
                   <span className="lines">
                     {r.map((x) => (
@@ -143,11 +140,6 @@ function RecordView({ sid }: { sid: string }) {
           })}
         </ol>
       )}
-
-      <section className="block">
-        <h2>このセッションの写真</h2>
-        <PhotoStrip sessionId={sid} gameId={null} />
-      </section>
 
       <GameEditor
         open={editing.open}
@@ -258,8 +250,6 @@ function GameDetail({ game, onClose, onEdit }: { game: Game | null; onClose: () 
             </p>
             {!pending && (
               <>
-                <h3>写真</h3>
-                <PhotoStrip sessionId={g.sessionId} gameId={g.id} />
                 <button
                   type="button"
                   className="btn ghost wide"
