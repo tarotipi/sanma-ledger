@@ -60,7 +60,7 @@ function AdminBanner() {
   if (!admin) return null;
   return (
     <div className="admin-banner" role="status">
-      管理者モード：確認なしで編集できます
+      記録係モード：確認なしで訂正できます（記録は管理者のみ閲覧）
       <button type="button" onClick={() => setAdmin(false)}>
         終了
       </button>

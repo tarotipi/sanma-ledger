@@ -108,7 +108,7 @@ function audit(
   c: C,
   entity: string,
   entityId: string,
-  action: "insert" | "update" | "delete" | "restore",
+  action: "insert" | "update" | "delete" | "restore" | "admin_update" | "admin_delete" | "admin_restore",
   before: unknown,
   after: unknown,
   actor?: Actor,
@@ -438,7 +438,8 @@ app.get("/api/g/:gid/logs", async (c) => {
   const before = Number(c.req.query("before") ?? 0) || Number.MAX_SAFE_INTEGER;
   const entity = c.req.query("entity");
   const entityId = c.req.query("entityId");
-  let sql = `SELECT * FROM audit_logs WHERE group_id=? AND id<?`;
+  // 記録係の訂正（admin_*）はここには出さない。管理者は /admin/logs で見る。
+  let sql = `SELECT * FROM audit_logs WHERE group_id=? AND id<? AND action NOT IN ('admin_update','admin_delete','admin_restore')`;
   const params: unknown[] = [gid, before];
   if (entity) {
     sql += ` AND entity=?`;
@@ -719,6 +720,70 @@ app.patch("/api/g/:gid/games/:id", async (c) => {
     audit(c, "games", String(row.id), "update", before, after),
   ]);
   return c.json(after);
+});
+
+// ---------- 記録係による訂正 ----------
+// 対局に参加しない記録係が、言い間違い・打ち間違いを直すための経路。パスワードで保護する。
+// 訂正の中身は audit_logs に必ず記録する（記録は消さない）。action を admin_* にして、
+// 閲覧は管理者（パスワード保持者）だけに絞る。プレイヤーには見せない。
+const ADMIN_PW = "taro0813";
+
+app.post("/api/g/:gid/admin/games/:id", async (c) => {
+  const b = await body<{ password: unknown; scores?: unknown; action?: unknown }>(c);
+  if (b.password !== ADMIN_PW) throw new HttpError(403, "管理者パスワードが違います。");
+  const row = await getRow(c, "games", c.req.param("id"));
+  const before = mapGame(row);
+  if (b.action === "delete") {
+    const t = now();
+    await c.env.DB.batch([
+      c.env.DB.prepare(`UPDATE games SET deleted_at=? WHERE id=?`).bind(t, row.id),
+      audit(c, "games", String(row.id), "admin_delete", before, { ...before, deletedAt: t }),
+    ]);
+    return c.json({ ok: true });
+  }
+  if (b.action === "restore") {
+    await c.env.DB.batch([
+      c.env.DB.prepare(`UPDATE games SET deleted_at=NULL WHERE id=?`).bind(row.id),
+      audit(c, "games", String(row.id), "admin_restore", before, { ...before, deletedAt: null }),
+    ]);
+    return c.json({ ok: true });
+  }
+  const scores = await checkScores(c, b.scores);
+  // updated_at は created_at のまま＝半荘一覧に「変更あり」を出さない。訂正の中身は下の audit に全部残す。
+  const after = { ...before, scores };
+  await c.env.DB.batch([
+    c.env.DB.prepare(`UPDATE games SET scores=? WHERE id=?`).bind(JSON.stringify(scores), row.id),
+    audit(c, "games", String(row.id), "admin_update", before, after),
+  ]);
+  return c.json(after);
+});
+
+// 管理者だけが見られる記録係の編集履歴。パスワードが合えば admin_* の記録を返す。
+app.post("/api/g/:gid/admin/logs", async (c) => {
+  const b = await body<{ password: unknown; before?: unknown; limit?: unknown }>(c);
+  if (b.password !== ADMIN_PW) throw new HttpError(403, "管理者パスワードが違います。");
+  const gid = c.get("actor").groupId;
+  const limit = Math.min(Number(b.limit ?? 50) || 50, 200);
+  const before = Number(b.before ?? 0) || Number.MAX_SAFE_INTEGER;
+  const r = await c.env.DB.prepare(
+    `SELECT * FROM audit_logs WHERE group_id=? AND id<? AND action IN ('admin_update','admin_delete','admin_restore')
+     ORDER BY id DESC LIMIT ?`,
+  )
+    .bind(gid, before, limit)
+    .all<Row>();
+  return c.json({
+    logs: r.results.map((x) => ({
+      id: x.id,
+      entity: x.entity,
+      entityId: x.entity_id,
+      action: x.action,
+      before: x.before ? JSON.parse(String(x.before)) : null,
+      after: x.after ? JSON.parse(String(x.after)) : null,
+      actorName: x.actor_name,
+      actorDevice: String(x.actor_device).slice(0, 6),
+      createdAt: x.created_at,
+    })),
+  });
 });
 
 // ---------- チップ・調整・精算 ----------

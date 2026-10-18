@@ -125,7 +125,8 @@ export type LogEntity =
   | "chip_events"
   | "yakuman";
 
-export type LogAction = "insert" | "update" | "delete" | "restore";
+// admin_* は記録係による訂正。記録は必ず残すが、閲覧は管理者（パスワード保持者）に限定する。
+export type LogAction = "insert" | "update" | "delete" | "restore" | "admin_update" | "admin_delete" | "admin_restore";
 
 export type AuditLog = {
   id: number;

@@ -2,8 +2,8 @@ import { useRef, useState } from "react";
 import { forgetGroup } from "../api";
 import { navigate } from "../router";
 import { gamesInOrder, useGroup } from "../store";
-import { Confirm, Dot, Sheet, Yen, type ConfirmSpec } from "../ui";
-import { RULES, calcGame } from "../../shared/mahjong";
+import { Confirm, Dot, Sheet, Yen, fmtDateTime, type ConfirmSpec } from "../ui";
+import { RULES, calcGame, fmtScore } from "../../shared/mahjong";
 import { downloadCsv, resizeImage, sessionBalances, sessionOf } from "../logic";
 import type { Member } from "../../shared/types";
 
@@ -447,10 +447,101 @@ function AdminSection() {
         {admin ? "管理者モードを終了する" : "管理者モード"}
       </button>
       {admin && (
-        <p className="note">
-          どの対戦記録でも、確認画面なしで自由に編集・削除できます。変更はこれまでどおり変更履歴に残ります。もう一度ボタンを押すと元に戻ります。
-        </p>
+        <>
+          <p className="note">
+            記録係用のモードです。どの対戦記録でも、確認なしで訂正・削除できます。訂正はふだんの履歴には出ませんが、下の「記録係の編集履歴」に全部残り、管理者だけが見られます。もう一度ボタンを押すと元に戻ります。
+          </p>
+          <AdminLogs />
+        </>
       )}
+    </div>
+  );
+}
+
+type AdminLog = {
+  id: number;
+  entityId: string;
+  action: string;
+  before: { seq?: number; sessionId?: string; scores?: { memberId: string; score: number }[] } | null;
+  after: { scores?: { memberId: string; score: number }[] } | null;
+  actorName: string;
+  actorDevice: string;
+  createdAt: string;
+};
+
+function AdminLogs() {
+  const { state, api } = useGroup();
+  const [logs, setLogs] = useState<AdminLog[] | null>(null);
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  if (!state) return null;
+  const mm = new Map(state.members.map((m) => [m.id, m]));
+  const name = (id?: string) => mm.get(id ?? "")?.name ?? "(不明)";
+  const sessionTitle = (sid?: string) => {
+    const s = state.sessions.find((x) => x.id === sid);
+    return s ? (s.title === s.playedOn ? s.playedOn : s.title) : "";
+  };
+  const ACT: Record<string, string> = { admin_update: "訂正", admin_delete: "削除", admin_restore: "復元" };
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const r = await api<{ logs: AdminLog[] }>("POST", "/admin/logs", { password: "taro0813", limit: 100 });
+      setLogs(r.logs);
+      setOpen(true);
+    } catch {
+      setLogs([]);
+      setOpen(true);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="admin-logs">
+      <button type="button" className="btn wide" disabled={loading} onClick={() => (open ? setOpen(false) : void load())}>
+        {open ? "記録係の編集履歴を閉じる" : loading ? "読み込み中…" : "記録係の編集履歴を見る"}
+      </button>
+      {open && logs && (logs.length === 0 ? (
+        <p className="note">記録係による訂正はまだありません。</p>
+      ) : (
+        <ol className="logs">
+          {logs.map((l) => {
+            const b = l.before?.scores ?? [];
+            const a = l.after?.scores ?? [];
+            const ids = [...new Set([...b, ...a].map((s) => s.memberId))];
+            return (
+              <li key={l.id} className="log admin-log">
+                <div className="log-head">
+                  <span className="act">{ACT[l.action] ?? l.action}</span>
+                  <time>{fmtDateTime(l.createdAt)}</time>
+                  <span className="who">
+                    {l.actorName}
+                    <small>（端末 {l.actorDevice}）</small>
+                  </span>
+                </div>
+                <p>
+                  {sessionTitle(l.before?.sessionId)} 第{l.before?.seq}半荘
+                </p>
+                {l.action === "admin_update" ? (
+                  ids.map((id) => {
+                    const x = b.find((s) => s.memberId === id);
+                    const y = a.find((s) => s.memberId === id);
+                    if (x?.score === y?.score) return null;
+                    return (
+                      <p key={id} className="detail">
+                        {name(id)} {x ? fmtScore(x.score) : "—"} → {y ? fmtScore(y.score) : "—"}
+                      </p>
+                    );
+                  })
+                ) : (
+                  <p className="detail">{b.map((s) => `${name(s.memberId)} ${fmtScore(s.score)}`).join("　")}</p>
+                )}
+              </li>
+            );
+          })}
+        </ol>
+      ))}
     </div>
   );
 }

@@ -1267,3 +1267,13 @@ dialog.sheet[open] {
   padding-top: 16px;
   border-top: 1px solid var(--line);
 }
+.admin-logs {
+  margin-top: 12px;
+}
+.admin-logs .logs {
+  margin-top: 10px;
+}
+.log.admin-log {
+  border-left-color: var(--focus);
+  background: color-mix(in srgb, var(--focus) 6%, var(--surface));
+}

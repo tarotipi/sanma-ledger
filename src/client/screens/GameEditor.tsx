@@ -6,6 +6,7 @@ import type { Game, GroupState, Score } from "../../shared/types";
 import { settledImpact } from "../logic";
 
 const YAKU = ["国士無双", "四暗刻", "大三元", "字一色", "緑一色", "清老頭", "小四喜", "大四喜", "四槓子", "九蓮宝燈", "天和", "地和", "数え役満"];
+const ADMIN_PW = "taro0813";
 
 type Slot = { memberId: string; text: string; neg: boolean; auto: boolean };
 
@@ -208,12 +209,15 @@ export function GameEditor({
       patchState(() => nextState);
       onClose();
       try {
-        const saved = game
-          ? await api<Game>("PATCH", `/games/${game.id}`, { scores })
-          : await api<Game>("POST", "/games", { sessionId, scores });
+        const saved =
+          game && admin
+            ? await api<Game>("POST", `/admin/games/${game.id}`, { password: ADMIN_PW, scores }) // 記録係の訂正
+            : game
+              ? await api<Game>("PATCH", `/games/${game.id}`, { scores })
+              : await api<Game>("POST", "/games", { sessionId, scores });
         patchState((s) => ({ ...s, games: s.games.map((g) => (g.id === after.id ? saved : g)) }));
-        toast(game ? `第${saved.seq}半荘を変更しました` : `第${saved.seq}半荘を記録しました`);
-        if (pendingYaku) await api("POST", "/yakuman", { sessionId, gameId: saved.id, ...pendingYaku });
+        toast(game ? (admin ? "訂正しました" : `第${saved.seq}半荘を変更しました`) : `第${saved.seq}半荘を記録しました`);
+        if (pendingYaku && !admin) await api("POST", "/yakuman", { sessionId, gameId: saved.id, ...pendingYaku });
       } catch (e) {
         toast(e instanceof Error ? e.message : "保存できませんでした。");
       } finally {

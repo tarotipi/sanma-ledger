@@ -172,9 +172,11 @@ function GameDetail({ game, onClose, onEdit }: { game: Game | null; onClose: () 
   const doDelete = async () => {
     if (!g) return;
     try {
-      await api("POST", `/games/${g.id}/delete`);
+      // 記録係モードは記録係の訂正として削除（記録は残すが閲覧は管理者限定）
+      if (admin) await api("POST", `/admin/games/${g.id}`, { password: "taro0813", action: "delete" });
+      else await api("POST", `/games/${g.id}/delete`);
       onClose();
-      toast(`第${g.seq}半荘を削除しました`);
+      toast(admin ? "削除しました" : `第${g.seq}半荘を削除しました`);
       await refresh();
     } catch (e) {
       toast(e instanceof Error ? e.message : "削除できませんでした。");
@@ -182,7 +184,7 @@ function GameDetail({ game, onClose, onEdit }: { game: Game | null; onClose: () 
   };
   const del = () => {
     if (!g) return;
-    if (admin) return void doDelete(); // 管理者モードは確認を飛ばす（削除は履歴に残る）
+    if (admin) return void doDelete(); // 記録係モードは確認を飛ばす
     const nextState = { ...state, games: state.games.map((x) => (x.id === g.id ? { ...x, deletedAt: "x" } : x)) };
     const impact = settledImpact(state, nextState, g.sessionId);
     setConfirm({
