@@ -34,7 +34,7 @@ export function Home() {
   return (
     <main className="page narrow">
       <header className="brand">
-        <h1>サンマ帳</h1>
+        <h1>対戦記録</h1>
       </header>
 
       {groups.length > 0 && (

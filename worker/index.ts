@@ -288,7 +288,7 @@ app.post("/api/groups", async (c) => {
   const secret = await init(c.env);
   const b = await body<{ name: unknown; code: unknown; members: unknown }>(c);
   // グループ名と合言葉は省略可（あとで設定画面から変えられる）
-  const name = typeof b.name === "string" && b.name.trim() ? str(b.name, "グループ名", 40) : "サンマ帳";
+  const name = typeof b.name === "string" && b.name.trim() ? str(b.name, "グループ名", 40) : "対戦記録";
   const code = typeof b.code === "string" ? b.code.trim() : "";
   if (code && code.length < 4) throw new HttpError(400, "合言葉は4文字以上にしてください。");
   const names = Array.isArray(b.members)

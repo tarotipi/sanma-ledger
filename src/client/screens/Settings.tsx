@@ -64,7 +64,7 @@ export function SettingsView({ sid }: { sid?: string }) {
         >
           この端末からグループを外す
         </button>
-        <p className="note">外してもデータは消えません。合言葉を入れればまた入れます。</p>
+        <p className="note">外してもデータは消えません。招待リンクを開けばまた入れます。</p>
       </section>
     </>
   );
@@ -320,7 +320,6 @@ function MembersSettings() {
 function GroupSettings() {
   const { state, gid, api, refresh, toast } = useGroup();
   const [name, setName] = useState(state?.group.name ?? "");
-  const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const file = useRef<HTMLInputElement>(null);
   if (!state) return null;
@@ -334,36 +333,43 @@ function GroupSettings() {
       toast(e instanceof Error ? e.message : "保存できませんでした。");
     }
   };
+  const copyUrl = async () => {
+    try {
+      await navigator.clipboard.writeText(url);
+      toast("リンクをコピーしました");
+    } catch {
+      toast("コピーできませんでした。URLを長押しで選んでください。");
+    }
+  };
   return (
     <section className="block">
       <h2>グループ</h2>
       <div className="form">
         <label>
-          招待URL
+          招待リンク
           <input value={url} readOnly onFocus={(e) => e.target.select()} />
-          <small>
-            {state.group.hasCode
-              ? "合言葉と一緒に送ってください。"
-              : "合言葉なし：このURLを知っている人は誰でも入れます。"}
-          </small>
+          <small>このリンクを知っている人は、開くだけで参加できます。</small>
         </label>
-        <button
-          type="button"
-          className="btn"
-          onClick={async () => {
-            try {
-              if (navigator.share) await navigator.share({ title: state.group.name, url });
-              else {
-                await navigator.clipboard.writeText(url);
-                toast("URLをコピーしました");
-              }
-            } catch {
-              /* キャンセル */
-            }
-          }}
-        >
-          URLを送る
-        </button>
+        <div className="row-between">
+          <button type="button" className="btn primary" onClick={() => void copyUrl()}>
+            リンクをコピー
+          </button>
+          {typeof navigator !== "undefined" && "share" in navigator && (
+            <button
+              type="button"
+              className="btn"
+              onClick={async () => {
+                try {
+                  await navigator.share({ title: state.group.name, url });
+                } catch {
+                  /* キャンセル */
+                }
+              }}
+            >
+              共有
+            </button>
+          )}
+        </div>
 
         <label>
           背景の写真
@@ -409,28 +415,42 @@ function GroupSettings() {
         >
           グループ名を変更
         </button>
-
-        <label>
-          合言葉{state.group.hasCode ? "（設定済み）" : "（なし）"}
-          <input value={code} onChange={(e) => setCode(e.target.value)} minLength={4} maxLength={64} placeholder="4文字以上" />
-          <small>設定すると、新しく入る人は合言葉が必要になります。すでに入っている端末はそのまま使えます。</small>
-        </label>
-        <div className="row-between">
-          <button
-            type="button"
-            className="btn"
-            disabled={code.length < 4}
-            onClick={() => void run(() => api("PATCH", "", { code }), "合言葉を設定しました").then(() => setCode(""))}
-          >
-            合言葉を設定
-          </button>
-          {state.group.hasCode && (
-            <button type="button" className="btn ghost" onClick={() => void run(() => api("PATCH", "", { code: "" }), "合言葉をなしにしました")}>
-              合言葉をなしにする
-            </button>
-          )}
-        </div>
       </div>
+      <AdminSection />
     </section>
+  );
+}
+
+function AdminSection() {
+  const { admin, setAdmin, toast } = useGroup();
+  return (
+    <div className="admin-box">
+      <button
+        type="button"
+        className={`btn wide ${admin ? "danger" : "ghost"}`}
+        onClick={() => {
+          if (admin) {
+            setAdmin(false);
+            toast("管理者モードを終了しました");
+            return;
+          }
+          const pw = window.prompt("管理者パスワードを入力");
+          if (pw == null) return;
+          if (pw === "taro0813") {
+            setAdmin(true);
+            toast("管理者モードにしました");
+          } else {
+            toast("パスワードが違います。");
+          }
+        }}
+      >
+        {admin ? "管理者モードを終了する" : "管理者モード"}
+      </button>
+      {admin && (
+        <p className="note">
+          どの対戦記録でも、確認画面なしで自由に編集・削除できます。変更はこれまでどおり変更履歴に残ります。もう一度ボタンを押すと元に戻ります。
+        </p>
+      )}
+    </div>
   );
 }

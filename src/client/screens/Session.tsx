@@ -162,15 +162,27 @@ function RecordView({ sid }: { sid: string }) {
 }
 
 function GameDetail({ game, onClose, onEdit }: { game: Game | null; onClose: () => void; onEdit: (g: Game) => void }) {
-  const { state, gid, api, refresh, toast } = useGroup();
+  const { state, gid, api, refresh, toast, admin } = useGroup();
   const [confirm, setConfirm] = useState<ConfirmSpec | null>(null);
   if (!state) return null;
   const g = game ? state.games.find((x) => x.id === game.id) ?? game : null;
   const mm = new Map(state.members.map((m) => [m.id, m]));
   const pending = g?.id.startsWith("tmp-");
 
+  const doDelete = async () => {
+    if (!g) return;
+    try {
+      await api("POST", `/games/${g.id}/delete`);
+      onClose();
+      toast(`第${g.seq}半荘を削除しました`);
+      await refresh();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "削除できませんでした。");
+    }
+  };
   const del = () => {
     if (!g) return;
+    if (admin) return void doDelete(); // 管理者モードは確認を飛ばす（削除は履歴に残る）
     const nextState = { ...state, games: state.games.map((x) => (x.id === g.id ? { ...x, deletedAt: "x" } : x)) };
     const impact = settledImpact(state, nextState, g.sessionId);
     setConfirm({
@@ -185,16 +197,7 @@ function GameDetail({ game, onClose, onEdit }: { game: Game | null; onClose: () 
       ),
       okLabel: "削除する",
       danger: true,
-      onOk: async () => {
-        try {
-          await api("POST", `/games/${g.id}/delete`);
-          onClose();
-          toast(`第${g.seq}半荘を削除しました`);
-          await refresh();
-        } catch (e) {
-          toast(e instanceof Error ? e.message : "削除できませんでした。");
-        }
-      },
+      onOk: doDelete,
     });
   };
 

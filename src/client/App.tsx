@@ -49,8 +49,22 @@ function GroupGate({ route }: { route: Exclude<ReturnType<typeof parseRoute>, { 
   return (
     <>
       {backdrop}
+      <AdminBanner />
       <GroupScreen route={route} />
     </>
+  );
+}
+
+function AdminBanner() {
+  const { admin, setAdmin } = useGroup();
+  if (!admin) return null;
+  return (
+    <div className="admin-banner" role="status">
+      管理者モード：確認なしで編集できます
+      <button type="button" onClick={() => setAdmin(false)}>
+        終了
+      </button>
+    </div>
   );
 }
 

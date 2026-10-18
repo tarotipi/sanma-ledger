@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { liveGames, useGroup } from "../store";
 import { Confirm, Dot, Empty, Name, Sheet, Yen, fmtDateTime, type ConfirmSpec } from "../ui";
-import { calcGame, calcTransfers, fmtYen, splitFee } from "../../shared/mahjong";
+import { RULES, calcGame, calcTransfers, fmtYen, splitFee } from "../../shared/mahjong";
 import type { Adjustment, AdjustmentKind, GroupState, Member } from "../../shared/types";
 import { downloadCsv, participants, sessionBalances, sessionOf, settledImpact } from "../logic";
 import { SettledWarning } from "./GameEditor";
@@ -460,7 +460,7 @@ function ChipSection({ sid }: { sid: string }) {
         </button>
       </div>
       {buyers.length === 0 ? (
-        <p className="note">チップを買ったら「＋バイイン・返却」で記録します。最後（または途中で抜けるとき）に手持ちの枚数を入れると、チップの収支が出ます。</p>
+        <p className="note">「＋バイイン・返却」を押すと、最初は全員が20枚ずつ買う形で記録できます。チップがなくなったら、その人がまた買った分を追加します。最後（または途中で抜けるとき）に手持ちの枚数を入れると、チップの収支が出ます。</p>
       ) : (
         <>
           <div className="tbl-scroll">
@@ -578,12 +578,20 @@ function BuySheet({ sid, open, onClose }: { sid: string; open: boolean; onClose:
   const [lastOpen, setLastOpen] = useState(false);
   if (open !== lastOpen) {
     setLastOpen(open);
-    if (open) {
+    if (open && state) {
       setKind("buy");
-      setWho([]);
       setShowAll(false);
-      const last = state?.chipEvents.filter((e) => e.sessionId === sid && e.kind === "buy" && !e.deletedAt).at(-1);
-      setAmount(last ? String(last.amount) : "");
+      const price = sessionOf(state, sid)!.chipYen;
+      const buys = state.chipEvents.filter((e) => e.sessionId === sid && e.kind === "buy" && !e.deletedAt);
+      const last = buys.at(-1);
+      // まだ誰もバイインしていなければ、初期バイインとして全員・20枚を選んでおく
+      if (buys.length === 0) {
+        setWho(state.members.filter((m) => !m.hidden).map((m) => m.id));
+        setAmount(String(RULES.CHIP_START * price));
+      } else {
+        setWho([]);
+        setAmount(String(last!.amount));
+      }
     }
   }
   const people = usePeople(sid, showAll, []);
@@ -592,6 +600,7 @@ function BuySheet({ sid, open, onClose }: { sid: string; open: boolean; onClose:
   const yen = Number(amount);
   const ok = who.length > 0 && Number.isInteger(yen) && yen > 0;
   const presets = [10, 20, 30, 50].map((n) => n * price);
+  const allOn = people.length > 0 && people.every((m) => who.includes(m.id));
 
   return (
     <Sheet
@@ -632,6 +641,13 @@ function BuySheet({ sid, open, onClose }: { sid: string; open: boolean; onClose:
           : "増えすぎたチップを返した人を選びます。返した額だけ、その人の借りが減ります。"}
       </p>
       <div className="chips">
+        <button
+          type="button"
+          className={`chip ${allOn ? "on" : ""}`}
+          onClick={() => setWho(allOn ? [] : people.map((m) => m.id))}
+        >
+          全員
+        </button>
         {people.map((m) => {
           const on = who.includes(m.id);
           return (

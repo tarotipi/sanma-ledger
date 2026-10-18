@@ -7,10 +7,12 @@ export const RULES = {
   UMA_THIRD: -10, // 3位のウマ（pt）
   TOTAL: 1050, // 3人の合計 105,000点
   RATE_STEP: 10, // レートは10円刻み（1pt あたり円）
-  DEFAULT_RATE: 60,
+  DEFAULT_RATE: 50,
   CHIP_STEP: 50, // チップ単価は50円刻み
   CHIP_MIN: 50,
   DEFAULT_CHIP: 100,
+  /** バイインの初期枚数（最初に全員がこの枚数を買う。買い足しも記録する） */
+  CHIP_START: 20,
   /** 新しい順にこの件数までは警告なしで編集できる（W-01） */
   FREE_EDIT_LATEST: 1,
 } as const;
@@ -222,6 +224,8 @@ export function calcBalances(input: {
     }
   }
   for (const c of input.chips) for (const l of c.lines) get(l.memberId).chips += l.count * input.chipYen;
+  // バイイン方式：チップ収支＝最終枚数×単価 − バイイン合計 ＋ 返却合計。
+  // 初期の20枚もバイインとして記録するので、再バイイン（買い足し）があっても正しく計算できる。
   const latestCount = new Map<string, ChipEvent>();
   for (const e of input.chipEvents ?? []) {
     const x = get(e.memberId);

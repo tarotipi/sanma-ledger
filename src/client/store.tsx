@@ -16,6 +16,9 @@ type Ctx = {
   patchState: (fn: (s: GroupState) => GroupState) => void;
   toast: (msg: string) => void;
   member: Member | null;
+  /** 管理者モード：確認画面を飛ばして、どの半荘でも自由に編集できる（変更は履歴に残る） */
+  admin: boolean;
+  setAdmin: (on: boolean) => void;
 };
 
 const GroupCtx = createContext<Ctx | null>(null);
@@ -126,14 +129,16 @@ export function GroupProvider({ gid, children }: { gid: string; children: ReactN
     setState((s) => (s ? fn(s) : s));
   }, []);
 
+  const [admin, setAdmin] = useState(false);
+
   const member = useMemo(
     () => state?.members.find((m) => m.id === saved?.memberId) ?? null,
     [state, saved?.memberId],
   );
 
   const value = useMemo(
-    () => ({ gid, saved, state, loadError, setSaved, refresh, api, patchState, toast, member }),
-    [gid, saved, state, loadError, setSaved, refresh, api, patchState, toast, member],
+    () => ({ gid, saved, state, loadError, setSaved, refresh, api, patchState, toast, member, admin, setAdmin }),
+    [gid, saved, state, loadError, setSaved, refresh, api, patchState, toast, member, admin],
   );
   return <GroupCtx.Provider value={value}>{children}</GroupCtx.Provider>;
 }

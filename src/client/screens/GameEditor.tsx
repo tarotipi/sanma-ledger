@@ -97,7 +97,7 @@ export function GameEditor({
   sessionId: string;
   game: Game | null;
 }) {
-  const { state, api, refresh, patchState, toast } = useGroup();
+  const { state, api, refresh, patchState, toast, admin } = useGroup();
   const [slots, setSlots] = useState<Slot[]>([]);
   const [ties, setTies] = useState<Record<string, number>>({});
   const [confirm, setConfirm] = useState<ConfirmSpec | null>(null);
@@ -121,7 +121,9 @@ export function GameEditor({
       const live = liveGames(state, sessionId);
       const left = new Set(state.settlements.filter((x) => x.sessionId === sessionId && !x.deletedAt).map((x) => x.memberId));
       const sug = suggestNext(live, state.members.map((m) => m.id), left);
-      const ids = sug?.players ?? [];
+      const visible = state.members.filter((m) => !m.hidden);
+      // 提案があればそれを、なくてメンバーがちょうど3人ならその3人を最初から選ぶ
+      const ids = sug?.players ?? (visible.length === 3 ? visible.map((m) => m.id) : []);
       setSlots(ids.map((id) => ({ memberId: id, text: "", neg: false, auto: false })));
       if (sug?.sitOut.length) {
         const names = sug.sitOut.map((id) => state.members.find((m) => m.id === id)?.name).join("・");
@@ -219,8 +221,9 @@ export function GameEditor({
       }
     };
 
+    // 管理者モードなら確認画面を飛ばして保存（変更はこれまでどおり履歴に残る）
     const needW01 = game && !isFreeEdit(state, game);
-    if (needW01 || impact.length) {
+    if (!admin && (needW01 || impact.length)) {
       setConfirm({
         title: needW01 ? `第${game!.seq}半荘を変更しますか` : "精算済みの人がいます",
         body: (

@@ -1,7 +1,7 @@
 {
-  "name": "サンマ帳",
-  "short_name": "サンマ帳",
-  "description": "三人麻雀の点数から精算と成績を自動で出す",
+  "name": "対戦記録",
+  "short_name": "対戦記録",
+  "description": "三人麻雀の対戦記録・精算・成績",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

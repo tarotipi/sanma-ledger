@@ -1237,3 +1237,33 @@ dialog.sheet[open] {
   color: var(--muted);
   font-size: 0.8rem;
 }
+
+/* ---- 管理者モード ---- */
+.admin-banner {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: calc(6px + env(safe-area-inset-top)) 12px 6px;
+  background: var(--minus);
+  color: #fff;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+.admin-banner button {
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  background: transparent;
+  color: #fff;
+  border-radius: 6px;
+  padding: 2px 10px;
+  font: inherit;
+  cursor: pointer;
+}
+.admin-box {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
