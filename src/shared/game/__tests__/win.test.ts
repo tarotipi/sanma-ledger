@@ -52,6 +52,20 @@ describe("通常役の集計", () => {
     expect(a.yaku.map((y) => y.name)).toContain("北");
   });
 
+  it("北をポンしていても北の役牌で和了れる（R-06）", () => {
+    const melds: Meld[] = [{ kind: "pon", face: "4z" }];
+    const ctx = baseCtx({
+      hand: parseTiles("1p 2p 3p 7p 8p 9p 2s 3s 4s 9m 9m"),
+      melds,
+      winTile: "9m",
+      winBy: "ron",
+      seatWind: "2z",
+    });
+    const a = analyzeWin(ctx);
+    expect(a.valid).toBe(true);
+    expect(a.yaku.map((y) => y.name)).toContain("北");
+  });
+
   it("喰いタンは有効（R-07）", () => {
     const melds: Meld[] = [{ kind: "pon", face: "4p" }];
     const ctx = baseCtx({

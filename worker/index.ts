@@ -1043,11 +1043,8 @@ for (const action of ["delete", "restore"] as const) {
   });
 }
 
-app.all("/api/*", () => {
-  throw new HttpError(404, "見つかりません。");
-});
-
 // ---------- オンライン卓（WebSocket） ----------
+// 注意：この登録は下の「/api/* → 404」より前に置くこと（Hono は登録順に照合するため、後ろだと必ず404になる）
 // ブラウザの WebSocket はヘッダーを付けられないので、トークンは ?t= で渡す（requireAuth が読む）。
 // 接続先の Durable Object はグループIDで決まる（1グループ＝1卓）。
 
@@ -1066,5 +1063,9 @@ async function tableSocket(c: C): Promise<Response> {
 
 app.get("/api/table/:gid/ws", requireAuth, tableSocket);
 app.get("/api/g/:gid/table/ws", tableSocket); // requireAuth は /api/g/:gid/* で適用済み
+
+app.all("/api/*", () => {
+  throw new HttpError(404, "見つかりません。");
+});
 
 export default app;
