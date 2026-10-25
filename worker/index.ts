@@ -7,7 +7,12 @@ type Env = {
   DB: D1Database;
   PHOTOS: KVNamespace;
   ASSETS: Fetcher;
+  /** オンライン卓（Durable Object。1グループ＝1卓） */
+  TABLE: DurableObjectNamespace;
 };
+
+// オンライン卓の Durable Object クラス（wrangler.jsonc の durable_objects で参照）
+export { MahjongTable } from "./table";
 
 type Actor = { groupId: string; device: string; memberId: string | null; name: string };
 type Vars = { actor: Actor };
@@ -1041,5 +1046,25 @@ for (const action of ["delete", "restore"] as const) {
 app.all("/api/*", () => {
   throw new HttpError(404, "見つかりません。");
 });
+
+// ---------- オンライン卓（WebSocket） ----------
+// ブラウザの WebSocket はヘッダーを付けられないので、トークンは ?t= で渡す（requireAuth が読む）。
+// 接続先の Durable Object はグループIDで決まる（1グループ＝1卓）。
+
+async function tableSocket(c: C): Promise<Response> {
+  if (c.req.header("upgrade")?.toLowerCase() !== "websocket") {
+    throw new HttpError(400, "WebSocket で接続してください。");
+  }
+  const gid = c.get("actor").groupId;
+  const g = await c.env.DB.prepare(`SELECT id FROM groups WHERE id=?`).bind(gid).first<Row>();
+  if (!g) throw new HttpError(404, "グループが見つかりません。URLを確認してください。");
+  const stub = c.env.TABLE.get(c.env.TABLE.idFromName(gid));
+  const headers = new Headers(c.req.raw.headers);
+  headers.set("x-group-id", gid);
+  return stub.fetch(new Request(c.req.raw.url, { headers }));
+}
+
+app.get("/api/table/:gid/ws", requireAuth, tableSocket);
+app.get("/api/g/:gid/table/ws", tableSocket); // requireAuth は /api/g/:gid/* で適用済み
 
 export default app;

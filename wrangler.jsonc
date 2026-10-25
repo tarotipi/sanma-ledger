@@ -13,6 +13,9 @@
   // ID を書かないと、初回の wrangler deploy で自動作成される（自動プロビジョニング）
   "d1_databases": [{ "binding": "DB", "database_name": "sanma-ledger-db" }],
   "kv_namespaces": [{ "binding": "PHOTOS" }],
+  // オンライン卓（1グループ＝1卓の Durable Object。SQLite版は無料プランで使える）
+  "durable_objects": { "bindings": [{ "name": "TABLE", "class_name": "MahjongTable" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["MahjongTable"] }],
   // workers.dev のURLを有効にし、試験用のURLは作らない
   "workers_dev": true,
   "preview_urls": false,

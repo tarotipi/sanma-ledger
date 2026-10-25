@@ -274,6 +274,17 @@ describe("チップ（祝儀）C-03, C-04", () => {
   });
 });
 
+describe("白ポッチはドラ対象外（R-35）", () => {
+  it("万能で和了牌(4s)として使っても、4sドラに数えない", () => {
+    const hand = parseTiles("1p 2p 3p 7p 8p 9p 2s 3s 4s 6s 7s 8s 9m 9m");
+    const common = { hand, winTile: "4s", winBy: "tsumo" as const, riichi: true, doraIndicators: ["3s"] };
+    const normal = analyzeWin(baseCtx(common)); // 4sがドラ1枚
+    const pocchi = analyzeWin(baseCtx({ ...common, pocchiWin: true }));
+    expect(normal.dora.omote).toBe(1);
+    expect(pocchi.dora.omote).toBe(0);
+  });
+});
+
 describe("resolveWin 総合", () => {
   it("点数もチップも合計0、白ポッチ和了でチップ1", () => {
     const ctx = baseCtx({

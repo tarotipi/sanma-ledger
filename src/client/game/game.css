@@ -1,0 +1,622 @@
+/* オンライン三麻の卓。既存の styles.css の色（卓の緑・点棒の赤）に合わせる。
+   スマホ縦（幅360px）で手牌14枚が1行に収まるように、手牌は幅から大きさを決める。 */
+
+/* ---- 牌 ---- */
+.tile {
+  display: inline-block;
+  flex: none;
+  vertical-align: bottom;
+  filter: drop-shadow(0 1px 0 rgba(0, 0, 0, 0.25));
+}
+.tile-xs {
+  width: 18px;
+  height: 24px;
+}
+.tile-sm {
+  width: 22px;
+  height: 29px;
+}
+.tile-md {
+  width: 30px;
+  height: 40px;
+}
+.tile-lg {
+  width: 40px;
+  height: 53px;
+}
+.tile-fluid {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 3 / 4;
+}
+.tile-xs.tile-side {
+  width: 24px;
+  height: 18px;
+}
+.tile-sm.tile-side {
+  width: 29px;
+  height: 22px;
+}
+.tile-md.tile-side {
+  width: 40px;
+  height: 30px;
+}
+.tile-dim {
+  opacity: 0.38;
+}
+.tile.last {
+  outline: 2px solid #ffd54a;
+  outline-offset: 1px;
+  border-radius: 3px;
+}
+
+/* ---- 卓全体 ---- */
+.mj {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 8px 16px;
+  min-height: calc(100dvh - 56px);
+  background: radial-gradient(ellipse at 50% 40%, var(--felt) 0%, var(--felt-deep) 85%);
+  color: var(--readout-ink);
+  border-radius: var(--radius-m);
+}
+
+.mj .opps {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.mj .opp {
+  min-width: 0;
+  background: rgba(0, 0, 0, 0.18);
+  border-radius: var(--radius-s);
+  padding: 6px;
+}
+.mj .opp-hand {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1px;
+  margin-top: 4px;
+}
+.mj .opp-hand .tile-xs {
+  width: 10px;
+  height: 14px;
+}
+.mj .opp-side {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.mj .pbadge {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  font-size: 13px;
+  line-height: 1.3;
+}
+.mj .pbadge.turn {
+  color: #ffe58a;
+}
+.mj .pbadge .wind {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.14);
+  font-weight: 700;
+  font-size: 12px;
+}
+.mj .pbadge.turn .wind {
+  background: #ffe58a;
+  color: var(--felt-deep);
+}
+.mj .pname {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 7em;
+}
+.mj .pname .off {
+  margin-left: 4px;
+  font-style: normal;
+  font-size: 11px;
+  color: var(--readout-minus);
+}
+.mj .pscore {
+  font-family: var(--num);
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.mj .pchips {
+  font-family: var(--num);
+  font-size: 14px;
+  color: #f3d27a;
+}
+.mj .riichi-stick {
+  display: inline-block;
+  width: 34px;
+  height: 6px;
+  border-radius: 3px;
+  background: #fff;
+  box-shadow: inset 0 0 0 1px #999;
+  position: relative;
+}
+.mj .riichi-stick::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 4px;
+  height: 4px;
+  margin: -2px 0 0 -2px;
+  border-radius: 50%;
+  background: var(--minus);
+}
+
+.mj .flowers {
+  display: inline-flex;
+  gap: 2px;
+}
+.mj .melds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: flex-end;
+}
+.mj .meld {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 0;
+}
+
+/* ---- 中央 ---- */
+.mj .center {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  padding: 6px 10px;
+  border-radius: var(--radius-s);
+  background: rgba(0, 0, 0, 0.28);
+  font-size: 13px;
+}
+.mj .center .round {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+.mj .center .round strong {
+  font-size: 16px;
+}
+.mj .center .wall {
+  font-family: var(--num);
+  font-size: 16px;
+}
+.mj .center .dora {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+.mj .center .dora span {
+  margin-right: 2px;
+}
+
+/* ---- 捨て牌 ---- */
+.mj .ponds {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.mj .pond {
+  display: grid;
+  grid-template-columns: 3.6em 1fr;
+  gap: 6px;
+  align-items: start;
+  min-height: 31px;
+}
+.mj .pond-name {
+  font-size: 11px;
+  opacity: 0.8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding-top: 6px;
+}
+.mj .pond-tiles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1px;
+  align-items: flex-end;
+}
+.mj .pond.mine .pond-name {
+  color: #ffe58a;
+}
+
+/* ---- 自分の席 ---- */
+.mj .mine {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.mj .mine-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.mj .timer {
+  margin-left: auto;
+  font-family: var(--num);
+  font-size: 18px;
+  padding: 0 8px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.3);
+}
+.mj .timer.hurry {
+  color: var(--readout-minus);
+}
+.mj .waits {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 13px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(255, 229, 138, 0.16);
+  align-self: flex-start;
+}
+.mj .hand {
+  display: grid;
+  grid-template-columns: repeat(13, minmax(0, 1fr)) 6px minmax(0, 1fr);
+  align-items: end;
+  gap: 1px;
+  max-width: 640px;
+}
+.mj .hand-tile {
+  /* 押しやすさのため、見た目より縦に広い領域を取る（D-04） */
+  min-height: 44px;
+  display: flex;
+  align-items: flex-end;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  transition: transform 0.08s ease;
+}
+.mj .hand-tile.drawn {
+  grid-column: 15;
+}
+.mj .hand-tile.sel {
+  transform: translateY(-8px);
+}
+.mj .hand-tile.locked {
+  cursor: default;
+}
+.mj .hand-tile.locked .tile {
+  filter: brightness(0.82);
+}
+.mj .hint {
+  margin: 0;
+  font-size: 12px;
+  opacity: 0.85;
+}
+
+.mj .actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+.mj .act {
+  min-height: 44px;
+  min-width: 72px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 2px solid #ffe58a;
+  background: rgba(0, 0, 0, 0.35);
+  color: #ffe58a;
+  font-weight: 700;
+  font-size: 16px;
+  cursor: pointer;
+}
+.mj .act.win {
+  background: var(--minus);
+  border-color: #ffb3a8;
+  color: #fff;
+}
+.mj .act.riichi {
+  background: #ffe58a;
+  color: var(--felt-deep);
+}
+.mj .act.ghost {
+  border-color: rgba(255, 255, 255, 0.5);
+  color: #fff;
+}
+
+.mj .lastlog {
+  margin: 0;
+  font-size: 12px;
+  opacity: 0.75;
+}
+
+/* ---- 結果 ---- */
+.result-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 12px;
+  background: rgba(5, 20, 15, 0.6);
+  overflow-y: auto;
+}
+.result-overlay .result {
+  width: min(520px, 100%);
+  max-height: calc(100dvh - 24px);
+  overflow-y: auto;
+  background: var(--surface);
+  color: var(--ink);
+  border-radius: var(--radius-m);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.result-overlay h2 {
+  margin: 0;
+  font-size: 18px;
+}
+.result-overlay .result-hand,
+.debug-hand .result-hand {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1px;
+  align-items: flex-end;
+}
+.result-overlay .result-hand .meld {
+  margin-left: 6px;
+  display: inline-flex;
+}
+.result-overlay .wintile {
+  margin-left: 8px;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  font-size: 10px;
+  color: var(--muted);
+}
+.result-overlay .yaku-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px 16px;
+}
+.result-overlay .yaku-list li {
+  display: flex;
+  justify-content: space-between;
+  border-bottom: 1px dotted var(--line);
+}
+.result-overlay .yakuman-name {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--gold);
+}
+.result-overlay .rank-line {
+  margin: 0;
+  font-size: 16px;
+}
+.result-overlay .rank-line strong {
+  font-size: 20px;
+  color: var(--minus);
+}
+.result-overlay .ind-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.result-overlay .ind-row span {
+  margin: 0 2px 0 6px;
+}
+.result-overlay .note.gold {
+  color: var(--gold);
+}
+.result-overlay .revealed small {
+  color: var(--muted);
+}
+.delta-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+.delta-table th,
+.delta-table td {
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--line);
+  text-align: right;
+}
+.delta-table th:first-child,
+.delta-table td:first-child,
+.delta-table td:nth-child(2):not(:last-child) {
+  text-align: left;
+}
+.delta-table td {
+  font-family: var(--num);
+  font-size: 16px;
+}
+.delta-table td small {
+  font-family: var(--font);
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* ---- ロビー・デバッグ ---- */
+.lobby-seats {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.lobby-seats li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+}
+.lobby-seats .empty {
+  color: var(--muted);
+}
+.lobby-seats .seat-no {
+  font-weight: 700;
+  width: 2em;
+}
+.lobby-seats .conn {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--muted);
+}
+.lobby-seats .conn.on {
+  color: var(--plus);
+}
+.conn-bar {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: var(--radius-s);
+  background: #fff3cd;
+  color: #6b4e00;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.debug-box {
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-s);
+  padding: 8px 10px;
+  font-size: 14px;
+}
+.debug-box summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+.debug-box .row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-top: 8px;
+}
+.debug-box input[type="number"],
+.debug-box textarea {
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+}
+.debug-box input[type="number"] {
+  width: 8em;
+}
+.debug-box textarea {
+  width: 100%;
+  min-height: 80px;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 11px;
+}
+.debug-hands {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  color: var(--ink);
+}
+.debug-hand small {
+  color: var(--muted);
+}
+.seat-tabs {
+  display: flex;
+  gap: 4px;
+}
+.seat-tabs button {
+  flex: 1;
+  min-height: 40px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+}
+.seat-tabs button.on {
+  background: var(--felt);
+  border-color: var(--felt);
+  color: #fff;
+}
+.seat-tabs button.need {
+  box-shadow: inset 0 -3px 0 #ffd54a;
+}
+.debug-log {
+  margin: 0;
+  padding: 8px;
+  max-height: 180px;
+  overflow-y: auto;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 11px;
+  background: var(--surface);
+  color: var(--ink);
+  border-radius: var(--radius-s);
+  list-style: none;
+}
+.err-bar {
+  font-size: 13px;
+  padding: 6px 10px;
+  border-radius: var(--radius-s);
+  background: var(--minus);
+  color: #fff;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.err-bar button {
+  background: none;
+  border: 0;
+  color: #fff;
+  cursor: pointer;
+}
+
+@media (max-width: 380px) {
+  .mj {
+    padding: 6px 4px 12px;
+  }
+  .mj .pscore {
+    font-size: 15px;
+  }
+  .mj .tile-sm {
+    width: 19px;
+    height: 25px;
+  }
+  .mj .tile-sm.tile-side {
+    width: 25px;
+    height: 19px;
+  }
+}

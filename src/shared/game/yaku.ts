@@ -101,6 +101,11 @@ function countDora(ctx: WinContext): DoraDetail {
   const tiles = allTilesForDora(ctx);
   const faces = tiles.map((t) => t.face);
   const fc = countsOf(faces);
+  // 白ポッチの万能和了：和了牌の面として入っている1枚は白ポッチなので、ドラ・秋ドラに数えない（R-35）
+  if (ctx.pocchiWin) {
+    const n = fc.get(ctx.winTile) ?? 0;
+    if (n > 0) fc.set(ctx.winTile, n - 1);
+  }
   const countInd = (inds: Face[]) =>
     inds.reduce((sum, ind) => sum + (fc.get(nextFace(ind)) ?? 0), 0);
   const aka = tiles.filter((t) => t.red).length; // 赤5（R-12）

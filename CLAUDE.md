@@ -30,6 +30,22 @@
 - 完了報告は3行以内：変更したファイル／テスト結果／確認してほしい点
 - 仕様を変える・足すときは docs/requirements.md に新しい要件IDで追記する
 
+## オンライン三麻（卓）
+仕様は docs/game-requirements.md（要件ID：R/P/C/I/D/DBG/N）。
+- ルール・点数のロジック：src/shared/game/（純粋関数。画面とサーバーで共用）
+  - tiles.ts 牌と山の構成 / rules.ts 数値と点数表（GAME_RULES）/ hand.ts 和了判定・待ち / yaku.ts 役と翻 / score.ts 点数の支払い / chips.ts チップ祝儀 / win.ts 和了の一括解決
+  - engine.ts 1局〜半荘の進行（状態はプレーンJSON。applyAction で1手ずつ進む）
+  - protocol.ts エンジン・サーバー・画面の共通の型。変えると3者に影響する
+- サーバー：worker/table.ts（Durable Object。1グループ＝1卓。WebSocket）。終局時に対戦記録へ自動登録
+- 画面：src/client/game/（牌SVG・卓の描画）、src/client/screens/Table.tsx（オンライン卓）、LocalTable.tsx（デバッグ卓）
+- ゲームのルール数値は GAME_RULES、点数は rules.ts の表だけを使う。画面やサーバーで点数を計算しない
+
+### 不具合の直し方
+1. デバッグ卓（/g/:gid/table/local）で再現する。シードを控えると同じ山を何度でも再現できる。「状態JSONをコピー」で報告用の状態が取れる
+2. 点数・役の誤りは src/shared/game/__tests__ に、その手牌をそのまま書いた失敗テストを先に足してから直す（parseTiles("1p 2p r5p w5z ...") で牌を書ける。r=赤 g=金 w=白ポッチ）
+3. 進行の誤りは engine.test.ts に presetWall（山の並びを指定）で局面を作って再現する
+4. オンラインだけで起きる問題は worker/table.ts のログ（[table グループID] で始まる行）を wrangler tail で見る
+
 ## コマンド
 - テスト：npm test（計算） / npm run typecheck
 - 手元で動かす：npm run dev（http://localhost:8787）

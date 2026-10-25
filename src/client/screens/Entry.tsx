@@ -229,6 +229,12 @@ export function GroupHome() {
         <button type="button" className="btn primary wide xl" disabled={busy} onClick={() => void start()}>
           対局を始める
         </button>
+        <button type="button" className="btn wide" onClick={() => navigate(`/g/${gid}/table`)}>
+          卓に入る（オンライン対局）
+        </button>
+        <button type="button" className="btn ghost small" onClick={() => navigate(`/g/${gid}/table/local`)}>
+          デバッグ卓
+        </button>
 
         {sessions.length > 0 && (
           <ul className="list">
