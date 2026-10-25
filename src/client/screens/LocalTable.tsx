@@ -20,7 +20,7 @@ function unwrapState(r: unknown, fallback: GameState): GameState {
 function hasAnyOption(v: PlayerView): boolean {
   const o = v.you?.options;
   if (!o) return false;
-  return o.discard || o.tsumo || o.ron || o.pon || o.pass || o.nextHand || o.kan.length > 0;
+  return o.discard || o.tsumo || o.ron || o.pon || o.pass || o.nextHand || o.nuki || o.kan.length > 0;
 }
 
 /** 自動で1手：鳴き待ちはパス、手番はツモ切り、局結果は次へ */
@@ -29,6 +29,7 @@ function autoActionFor(v: PlayerView): GameAction | null {
   if (!o || !v.you) return null;
   if (o.nextHand) return { type: "next_hand" };
   if (o.pass && !o.discard) return { type: "pass" };
+  if (o.nuki) return { type: "nuki" }; // 花は打牌できないので先に抜く（R-24）
   if (o.discard) {
     if (v.you.drawn) return { type: "discard", drawn: true };
     return { type: "discard", index: v.you.hand.length - 1 };

@@ -30,24 +30,45 @@ export interface SettleInput {
 
 export interface SettleResult {
   rank: ScoreRank;
+  /** 夏のランクアップ前のランク（R-21） */
+  baseRank: ScoreRank;
+  /** 夏で1ランク上がったか */
+  summerUp: boolean;
   /** 役満の倍数（0なら通常役。rank==='yakuman' で倍数1以上） */
   multiplier: number;
   /** プレイヤーID→点数の増減（合計0） */
   deltas: Record<string, number>;
 }
 
+export interface RankInfo {
+  rank: ScoreRank;
+  multiplier: number;
+  /** 夏のランクアップ前のランク */
+  baseRank: ScoreRank;
+  /** 夏で1ランク上がったか（R-21） */
+  summerUp: boolean;
+}
+
 /** 分析結果からランクと倍数を決める（夏のランクアップ込み R-21） */
-export function rankOf(analysis: WinAnalysis): { rank: ScoreRank; multiplier: number } {
-  if (analysis.yakuman > 0) return { rank: "yakuman", multiplier: analysis.yakuman };
-  let rank = rankFromHan(analysis.han);
-  if (analysis.summer) rank = bumpRank(rank); // 役満には来ない（yakuman>0で上のreturn）
-  const multiplier = rank === "yakuman" ? 1 : 1; // 数え/夏での役満は等倍
-  return { rank, multiplier };
+export function rankOf(analysis: WinAnalysis): RankInfo {
+  if (analysis.yakuman > 0) {
+    return { rank: "yakuman", multiplier: analysis.yakuman, baseRank: "yakuman", summerUp: false };
+  }
+  const baseRank = rankFromHan(analysis.han);
+  // 役満には来ない（yakuman>0で上のreturn）。数え役満はそれ以上上がらない
+  const rank = analysis.summer ? bumpRank(baseRank) : baseRank;
+  const multiplier = 1; // 数え/夏での役満は等倍
+  return { rank, multiplier, baseRank, summerUp: rank !== baseRank };
+}
+
+/** 役満チップ（C-07）に使う倍数。役満ランクなら最低1（数え・夏・流しも1）、それ以外は0 */
+export function yakumanMultiplierOf(r: { rank: ScoreRank; multiplier: number }): number {
+  return r.rank === "yakuman" ? Math.max(1, r.multiplier) : 0;
 }
 
 export function settleWin(input: SettleInput): SettleResult {
   const { analysis, winBy, honba, riichiSticks, dealerId, winnerId, discarderId, players } = input;
-  const { rank, multiplier } = rankOf(analysis);
+  const { rank, multiplier, baseRank, summerUp } = rankOf(analysis);
   const mult = Math.max(1, multiplier);
   const winnerIsDealer = winnerId === dealerId;
   const deltas: Record<string, number> = {};
@@ -85,7 +106,7 @@ export function settleWin(input: SettleInput): SettleResult {
   // 供託リーチ棒は和了者が総取り（R-44）
   deltas[winnerId] += riichiSticks * GAME_RULES.RIICHI_STICK;
 
-  return { rank, multiplier: mult === 1 && analysis.yakuman === 0 ? 0 : mult, deltas };
+  return { rank, baseRank, summerUp, multiplier: mult === 1 && analysis.yakuman === 0 ? 0 : mult, deltas };
 }
 
 // ---- 流局（R-45） ----

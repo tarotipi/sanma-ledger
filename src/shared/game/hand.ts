@@ -202,3 +202,129 @@ export function waits(concealedFaces: Face[], melds: Meld[]): Face[] {
 export function isTenpai(concealedFaces: Face[], melds: Meld[]): boolean {
   return waits(concealedFaces, melds).length > 0;
 }
+
+// ---------------------------------------------------------------------------
+// シャンテン数（D-07 表示用）。0=テンパイ、-1=和了形。
+// 手牌は副露を除いた面だけを渡す（花 "f*" は呼び出し側で除くが、念のためここでも無視する）。
+// 13枚相当（3n+1）でも14枚相当（3n+2）でも使える（14枚なら「1枚切った後の最小」と同じ値になる）。
+// ---------------------------------------------------------------------------
+
+/** 牌種index → スート（順子が作れるのは筒子・索子だけ） */
+const SUIT_OF: string[] = ORDER.map((f) => f[1]);
+/** 牌種index → 数字（字牌は0） */
+const RANK_OF: number[] = ORDER.map((f) => (f[1] === "z" ? 0 : Number(f[0])));
+const INDEX_OF = new Map<Face, number>(ORDER.map((f, i) => [f, i]));
+
+/** index i から始まる順子・搭子に使えるスートか（萬子は1と9しかないので不可） */
+function seqSuit(i: number): boolean {
+  return SUIT_OF[i] === "p" || SUIT_OF[i] === "s";
+}
+
+/** 面ごとの枚数（ORDER 順の配列）。花など ORDER に無い面は無視 */
+function countArray(faces: Face[]): number[] {
+  const c = ORDER.map(() => 0);
+  for (const f of faces) {
+    const i = INDEX_OF.get(f);
+    if (i !== undefined) c[i]++;
+  }
+  return c;
+}
+
+/**
+ * 面子・搭子の取り方を全部試して「2×面子数＋搭子数」の最大を返す（面子＋搭子は need 個まで）。
+ * c は破壊的に使うが、戻る前に必ず元に戻す。
+ */
+function bestSetScore(c: number[], start: number, m: number, t: number, need: number): number {
+  let i = start;
+  while (i < c.length && c[i] === 0) i++;
+  if (i >= c.length) return 2 * m + Math.min(t, need - m);
+  let best = 0;
+  const r = RANK_OF[i];
+  // 刻子
+  if (c[i] >= 3) {
+    c[i] -= 3;
+    best = Math.max(best, bestSetScore(c, i, m + 1, t, need));
+    c[i] += 3;
+  }
+  // 順子
+  if (seqSuit(i) && r <= 7 && c[i + 1] > 0 && c[i + 2] > 0) {
+    c[i]--;
+    c[i + 1]--;
+    c[i + 2]--;
+    best = Math.max(best, bestSetScore(c, i, m + 1, t, need));
+    c[i]++;
+    c[i + 1]++;
+    c[i + 2]++;
+  }
+  // 対子（搭子として）
+  if (c[i] >= 2) {
+    c[i] -= 2;
+    best = Math.max(best, bestSetScore(c, i, m, t + 1, need));
+    c[i] += 2;
+  }
+  // 両面・辺張
+  if (seqSuit(i) && r <= 8 && c[i + 1] > 0) {
+    c[i]--;
+    c[i + 1]--;
+    best = Math.max(best, bestSetScore(c, i, m, t + 1, need));
+    c[i]++;
+    c[i + 1]++;
+  }
+  // 嵌張
+  if (seqSuit(i) && r <= 7 && c[i + 2] > 0) {
+    c[i]--;
+    c[i + 2]--;
+    best = Math.max(best, bestSetScore(c, i, m, t + 1, need));
+    c[i]++;
+    c[i + 2]++;
+  }
+  // 孤立牌として捨てる
+  c[i]--;
+  best = Math.max(best, bestSetScore(c, i, m, t, need));
+  c[i]++;
+  return best;
+}
+
+/** 標準形（4面子1雀頭）のシャンテン数。副露1つ＝面子1つ */
+export function shantenStandard(concealedFaces: Face[], melds: Meld[]): number {
+  const c = countArray(concealedFaces);
+  const need = 4 - melds.length;
+  const base = 8 - 2 * melds.length;
+  let best = base - bestSetScore(c, 0, 0, 0, need); // 雀頭なし
+  for (let i = 0; i < c.length; i++) {
+    if (c[i] < 2) continue;
+    c[i] -= 2;
+    best = Math.min(best, base - bestSetScore(c, 0, 0, 0, need) - 1);
+    c[i] += 2;
+  }
+  return best;
+}
+
+/** 七対子のシャンテン数（副露があれば対象外＝大きな値） */
+export function shantenChiitoitsu(concealedFaces: Face[], melds: Meld[]): number {
+  if (melds.length > 0) return 99;
+  const c = countArray(concealedFaces);
+  const kinds = c.filter((n) => n > 0).length;
+  const pairs = c.filter((n) => n >= 2).length;
+  return 6 - pairs + Math.max(0, 7 - kinds);
+}
+
+/** 国士無双のシャンテン数（副露があれば対象外＝大きな値） */
+export function shantenKokushi(concealedFaces: Face[], melds: Meld[]): number {
+  if (melds.length > 0) return 99;
+  const c = countsOf(concealedFaces);
+  let kinds = 0;
+  let hasPair = false;
+  for (const f of KOKUSHI_FACES) {
+    const n = c.get(f) ?? 0;
+    if (n > 0) kinds++;
+    if (n >= 2) hasPair = true;
+  }
+  return 13 - kinds - (hasPair ? 1 : 0);
+}
+
+/** 標準形・七対子・国士の最小シャンテン数（0=テンパイ、-1=和了形） */
+export function shanten(concealedFaces: Face[], melds: Meld[]): number {
+  const faces = concealedFaces.filter((f) => !f.startsWith("f"));
+  return Math.min(shantenStandard(faces, melds), shantenChiitoitsu(faces, melds), shantenKokushi(faces, melds));
+}

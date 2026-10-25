@@ -7,6 +7,11 @@
 //   先頭から 親13枚 → 南家13枚 → 西家13枚 → 親の第1ツモ → 以降のツモ順。
 //   末尾14枚が王牌：[ドラ表示5枚][裏ドラ表示5枚][嶺上4枚]。
 //   嶺上から1枚引くたびに、生牌（ツモ山）の末尾1枚を嶺上へ回して王牌を14枚に保つ（P-09）。
+//
+// v0.6（§10）：
+//   - 花は自動で抜かない。手番の人が {type:"nuki"} で1枚ずつ抜き、嶺上から補充（R-24）
+//   - 花は和了・待ち・シャンテンの計算では手牌から除く。花を持ったままではテンパイ扱いにならない
+//   - 持ち時間を使い切ってから60秒で自動処理。そのとき1チップを卓の供託チップへ（C-08）
 
 import type {
   AllowedActions,
@@ -23,11 +28,11 @@ import type {
   TablePhase,
 } from "./protocol";
 import { ALL_FACES, buildWall, faceName, isTerminalOrHonor, parseTile, type Face, type Flower, type Tile } from "./tiles";
-import { waits as calcWaits, type Meld } from "./hand";
+import { waits as calcWaits, shanten as calcShanten, type Meld } from "./hand";
 import type { WinAnalysis, WinContext } from "./yaku";
 import { resolveWin, type WinResolution } from "./win";
-import { settleDraw, settleWin } from "./score";
-import { settleChips } from "./chips";
+import { rankOf, settleDraw, settleWin, yakumanMultiplierOf } from "./score";
+import { chipBreakdown, settleChips, toChipDetail } from "./chips";
 import { GAME_RULES, type ScoreRank } from "./rules";
 
 // ---------------------------------------------------------------------------
@@ -39,6 +44,10 @@ const FLOWER_OF: Record<string, Flower> = { f1: "spring", f2: "summer", f3: "aut
 const FLOWER_LABEL: Record<Flower, string> = { spring: "春", summer: "夏", autumn: "秋", winter: "冬" };
 const BASE_MS = GAME_RULES.TURN_SECONDS * 1000; // 1手の基本時間
 const STOCK_MS = GAME_RULES.TURN_STOCK_SECONDS * 1000; // 1局ごとのストック
+/** 持ち時間を使い切ってから自動処理までの猶予（C-08：−60秒で自動ツモ切り/パス） */
+const OVERTIME_MS = 60 * 1000;
+/** 時間超過の自動処理1回で卓の供託に出すチップ枚数（C-08） */
+const TIMEOUT_CHIP_PENALTY = 1;
 const DORA_SLOTS = 5; // ドラ表示の最大枚数（初期1＋カン4）
 const RINSHAN_SLOTS = 4;
 const RANK_ORDER: ScoreRank[] = ["1han", "2han", "3han", "mangan", "haneman", "baiman", "sanbaiman", "yakuman"];
@@ -70,6 +79,8 @@ export interface PlayerState {
   riichi: boolean;
   doubleRiichi: boolean;
   riichiDiscardIndex: number | null;
+  /** オープンリーチ中（R-47：手牌を全員に公開） */
+  openRiichi: boolean;
   /** 一発の権利（リーチ宣言〜自分の次の打牌まで、鳴きで消える） */
   ippatsu: boolean;
   /** 見逃しによる同巡フリテン（自分の次のツモで解除） */
@@ -165,6 +176,16 @@ function isFlower(t: Tile): boolean {
   return t.face.startsWith("f");
 }
 
+/** 花を除いた手牌（和了・待ち・シャンテンの計算用。R-24） */
+function nonFlower(tiles: Tile[]): Tile[] {
+  return tiles.filter((t) => !isFlower(t));
+}
+
+/** 手牌かツモ牌に花があるか */
+function hasFlower(p: PlayerState): boolean {
+  return p.hand.some(isFlower) || (!!p.drawn && isFlower(p.drawn));
+}
+
 /** mulberry32。状態は s.rng に保存して再現可能にする */
 function rand(s: GameState): number {
   const t = (s.rng + 0x6d2b79f5) >>> 0;
@@ -237,10 +258,41 @@ function isMenzen(p: PlayerState): boolean {
   return p.melds.every((m) => m.kind === "ankan");
 }
 
-/** 手牌13枚相当（3n+1枚）のときの待ち */
+/** 手牌（ツモ牌を除く）が13枚相当（3n+1枚）のときの待ち。花は除いて数える */
 function waitsOf(p: PlayerState): Face[] {
-  if (p.hand.length % 3 !== 1) return [];
-  return calcWaits(facesOf(p.hand), p.melds);
+  const faces = facesOf(nonFlower(p.hand));
+  if (faces.length % 3 !== 1) return [];
+  return calcWaits(faces, p.melds);
+}
+
+/**
+ * 14枚相当を持っているとき、切るとテンパイになる牌とその待ち（D-07）。
+ * index は手牌の位置、ツモ牌は -1。花は切れないので対象外。花が残っていれば枚数が合わず空になる。
+ */
+function tenpaiDiscards(p: PlayerState): { index: number; waits: Face[] }[] {
+  const all = p.drawn ? [...p.hand, p.drawn] : [...p.hand];
+  if (nonFlower(all).length % 3 !== 2) return [];
+  const out: { index: number; waits: Face[] }[] = [];
+  const cache = new Map<string, Face[]>(); // 同じ面を切ったときの結果は同じ
+  const tryDiscard = (index: number, tile: Tile) => {
+    if (isFlower(tile)) return;
+    if (!cache.has(tile.face)) {
+      const rest = [...all];
+      rest.splice(index === -1 ? all.length - 1 : index, 1);
+      cache.set(tile.face, calcWaits(facesOf(nonFlower(rest)), p.melds));
+    }
+    const w = cache.get(tile.face)!;
+    if (w.length) out.push({ index, waits: [...w] });
+  };
+  p.hand.forEach((t, i) => tryDiscard(i, t));
+  if (p.drawn) tryDiscard(-1, p.drawn);
+  return out;
+}
+
+/** シャンテン数（花を除く。手牌＋ツモ牌） */
+function shantenOf(p: PlayerState): number {
+  const all = p.drawn ? [...p.hand, p.drawn] : p.hand;
+  return calcShanten(facesOf(nonFlower(all)), p.melds);
 }
 
 // ---------------------------------------------------------------------------
@@ -319,41 +371,43 @@ function drawRinshan(s: GameState): Tile | null {
   return t;
 }
 
-/** ツモ牌が花なら抜いて嶺上から補充する（続く限り） */
-function resolveFlowerOnDrawn(s: GameState, seat: SeatIndex): void {
-  const p = s.players[seat];
-  while (p.drawn && isFlower(p.drawn)) {
-    const f = FLOWER_OF[p.drawn.face];
-    p.flowers.push(f);
-    addLog(s, `${p.name} ${FLOWER_LABEL[f]}を抜いた`);
-    p.drawn = drawRinshan(s);
-  }
+/** 花を抜けるか（嶺上が残っていて、手牌かツモ牌に花がある） */
+function canNuki(s: GameState, seat: SeatIndex): boolean {
+  return s.stage === "discard" && s.turnSeat === seat && s.rinshan.length > 0 && hasFlower(s.players[seat]);
 }
 
-/** 配牌の中の花を抜いて嶺上から補充する */
-function extractHandFlowers(s: GameState, seat: SeatIndex): void {
+/**
+ * 花を1枚抜いて公開し、嶺上から1枚補充する（R-24）。
+ * ツモ牌が花ならそれを、なければ手牌の最初の花を抜く。
+ * 補充牌は新しいツモ牌になる（元のツモ牌は手牌へ入れる）。嶺上開花の判定（rinshanDraw）は変えない。
+ */
+function nukiOne(s: GameState, seat: SeatIndex): void {
   const p = s.players[seat];
-  for (;;) {
+  let flowerTile: Tile;
+  if (p.drawn && isFlower(p.drawn)) {
+    flowerTile = p.drawn;
+    p.drawn = null;
+  } else {
     const i = p.hand.findIndex(isFlower);
-    if (i < 0) break;
-    const f = FLOWER_OF[p.hand[i].face];
-    p.hand.splice(i, 1);
-    p.flowers.push(f);
-    addLog(s, `${p.name} ${FLOWER_LABEL[f]}を抜いた`);
-    const t = drawRinshan(s);
-    if (!t) break;
-    p.hand.push(t);
+    flowerTile = p.hand.splice(i, 1)[0];
+    if (p.drawn) {
+      p.hand.push(p.drawn);
+      p.drawn = null;
+    }
+    sortTiles(p.hand);
   }
-  sortTiles(p.hand);
+  const f = FLOWER_OF[flowerTile.face];
+  p.flowers.push(f);
+  p.drawn = drawRinshan(s);
+  addLog(s, `${p.name} ${FLOWER_LABEL[f]}を抜いた`);
 }
 
-/** 通常のツモ（生牌の先頭）。花なら自動で抜く */
+/** 通常のツモ（生牌の先頭）。花でもそのまま持つ（抜くのは本人の操作 R-24） */
 function drawNormal(s: GameState, seat: SeatIndex): void {
   const p = s.players[seat];
   p.drawn = s.live.shift() ?? null;
   p.furitenTemp = false; // 見逃しフリテンは自分のツモで解除
   s.rinshanDraw = false;
-  resolveFlowerOnDrawn(s, seat);
 }
 
 // ---------------------------------------------------------------------------
@@ -379,6 +433,7 @@ function newPlayer(p: { id: string; name: string }, seat: number): PlayerState {
     riichi: false,
     doubleRiichi: false,
     riichiDiscardIndex: null,
+    openRiichi: false,
     ippatsu: false,
     furitenTemp: false,
     furitenRiichi: false,
@@ -400,6 +455,7 @@ function resetPlayerForHand(p: PlayerState): void {
   p.riichi = false;
   p.doubleRiichi = false;
   p.riichiDiscardIndex = null;
+  p.openRiichi = false;
   p.ippatsu = false;
   p.furitenTemp = false;
   p.furitenRiichi = false;
@@ -430,8 +486,12 @@ function startHand(s: GameState, now: number): void {
   for (const p of s.players) resetPlayerForHand(p);
 
   const d = s.round.dealerSeat;
-  for (let k = 0; k < 3; k++) s.players[seatAt(d + k)].hand = s.live.splice(0, GAME_RULES.HANDS_PER_SET);
-  for (let k = 0; k < 3; k++) extractHandFlowers(s, seatAt(d + k));
+  // 配牌の花も手に残す。各自が自分の手番で抜く（R-24）
+  for (let k = 0; k < 3; k++) {
+    const p = s.players[seatAt(d + k)];
+    p.hand = s.live.splice(0, GAME_RULES.HANDS_PER_SET);
+    sortTiles(p.hand);
+  }
 
   addLog(s, `${roundLabel(s.round)} 開始（親：${s.players[d].name}）`);
   s.turnSeat = d;
@@ -456,7 +516,7 @@ export function createGame(players: { id: string; name: string }[], opts: Create
     seed: opts.seed,
     startDealer: 0,
     players: players.map((p, i) => newPlayer(p, i)),
-    round: { wind: "1z", number: 1, honba: 0, riichiSticks: 0, dealerSeat: 0 },
+    round: { wind: "1z", number: 1, honba: 0, riichiSticks: 0, dealerSeat: 0, chipPot: 0 },
     nextRound: null,
     live: [],
     doraTiles: [],
@@ -515,6 +575,7 @@ function buildCtx(
     riichi: p.riichi,
     doubleRiichi: p.doubleRiichi,
     ippatsu: p.riichi && p.ippatsu,
+    openRiichi: p.riichi && p.openRiichi,
     doraIndicators: doraFaces(s),
     uraIndicators: p.riichi ? uraFaces(s) : [],
     flowers: p.flowers,
@@ -572,6 +633,7 @@ interface TsumoEval {
 function evalTsumo(s: GameState, seat: SeatIndex): TsumoEval | null {
   const p = s.players[seat];
   if (!p.drawn) return null;
+  if (hasFlower(p)) return null; // 花を抜いた後の手で判定する（R-24）
   const candidates: TsumoEval[] = [];
   const normalTiles = [...p.hand, p.drawn];
   const normal = tryWin(s, seat, normalTiles, p.drawn.face, "tsumo", null, {});
@@ -591,7 +653,7 @@ function evalTsumo(s: GameState, seat: SeatIndex): TsumoEval | null {
   return best;
 }
 
-/** フリテンか（自分の捨て牌に待ちがある／見逃し中／リーチ後見逃し） */
+/** フリテンか（自分の捨て牌に待ちがある／見逃し中／リーチ後見逃し）。リーチ宣言には関係しない（R-46） */
 function isFuriten(p: PlayerState, w: Face[]): boolean {
   if (p.furitenTemp || p.furitenRiichi) return true;
   return p.discards.some((d) => w.includes(d.face));
@@ -633,18 +695,15 @@ function ownKanFaces(s: GameState, seat: SeatIndex): Face[] {
   return out;
 }
 
-/** リーチ宣言として切れる牌（手牌index、ツモ牌は -1） */
+/**
+ * リーチ宣言として切れる牌（手牌index、ツモ牌は -1）。
+ * フリテンでも宣言できる（R-46。ロンはできない）。花は切れないので候補にならない。
+ */
 function riichiCandidates(s: GameState, seat: SeatIndex): number[] {
   const p = s.players[seat];
   if (p.riichi || !p.drawn || !isMenzen(p)) return [];
   if (p.score < GAME_RULES.RIICHI_STICK || s.live.length < 3) return [];
-  const out: number[] = [];
-  const all = [...p.hand, p.drawn];
-  for (let i = -1; i < p.hand.length; i++) {
-    const rest = i === -1 ? p.hand : all.filter((_, k) => k !== i);
-    if (calcWaits(facesOf(rest), p.melds).length > 0) out.push(i);
-  }
-  return out;
+  return tenpaiDiscards(p).map((x) => x.index);
 }
 
 // ---------------------------------------------------------------------------
@@ -662,6 +721,7 @@ function emptyOptions(): AllowedActions {
     kan: [],
     pass: false,
     nextHand: false,
+    nuki: false,
   };
 }
 
@@ -674,6 +734,7 @@ function computeOptions(s: GameState, seat: SeatIndex): AllowedActions {
     o.kan = ownKanFaces(s, seat);
     o.riichiDiscards = riichiCandidates(s, seat);
     o.riichi = o.riichiDiscards.length > 0;
+    o.nuki = canNuki(s, seat);
   } else if (s.stage === "claim" && s.claim) {
     const e = s.claim.entries.find((x) => x.seat === seat);
     if (e && e.response === null) {
@@ -692,8 +753,24 @@ function computeOptions(s: GameState, seat: SeatIndex): AllowedActions {
 // 持ち時間（P-06）
 // ---------------------------------------------------------------------------
 
-function deadlineOf(s: GameState, seat: SeatIndex): number {
+/** 持ち時間（基本＋ストック）を使い切る時刻。ここから残り秒がマイナス表示になる（C-08） */
+function overtimeFromOf(s: GameState, seat: SeatIndex): number {
   return s.decisionStart + BASE_MS + s.players[seat].stock;
+}
+
+/** 自動処理（ツモ切り・パス）の時刻＝持ち時間切れ＋60秒（C-08） */
+function deadlineOf(s: GameState, seat: SeatIndex): number {
+  return overtimeFromOf(s, seat) + OVERTIME_MS;
+}
+
+/** この人が今判断中か（打牌待ちの手番、または鳴き・ロンの返答待ち） */
+function isDeciding(s: GameState, seat: SeatIndex): boolean {
+  if (s.stage === "discard") return s.turnSeat === seat;
+  if (s.stage === "claim" && s.claim) {
+    const e = s.claim.entries.find((x) => x.seat === seat);
+    return !!e && e.response === null;
+  }
+  return false;
 }
 
 /** 使った分だけストックを減らす（基本時間を超えた分） */
@@ -706,12 +783,11 @@ function consumeStock(s: GameState, seat: SeatIndex, now: number): void {
 }
 
 function personalDeadline(s: GameState, seat: SeatIndex): number | null {
-  if (s.stage === "discard" && s.turnSeat === seat) return deadlineOf(s, seat);
-  if (s.stage === "claim" && s.claim) {
-    const e = s.claim.entries.find((x) => x.seat === seat);
-    if (e && e.response === null) return deadlineOf(s, seat);
-  }
-  return null;
+  return isDeciding(s, seat) ? deadlineOf(s, seat) : null;
+}
+
+function personalOvertimeFrom(s: GameState, seat: SeatIndex): number | null {
+  return isDeciding(s, seat) ? overtimeFromOf(s, seat) : null;
 }
 
 export function nextDeadline(s: GameState): number | null {
@@ -751,6 +827,9 @@ function doDiscard(s: GameState, seat: SeatIndex, a: Extract<GameAction, { type:
     if (p.riichi) return "リーチ中はツモ切りしかできません";
     if (p.kuikaeFace && p.hand[a.index].face === p.kuikaeFace) return "喰い替えになるため、ポンした牌と同じ牌は切れません";
   }
+  const target = useDrawn ? p.drawn! : p.hand[a.index!];
+  if (isFlower(target)) return "花は切れません（「抜く」で抜いてください）";
+  if (a.open && !a.riichi) return "オープンリーチはリーチ宣言と同時にしか選べません";
   if (a.riichi) {
     if (!opts.riichi) return "リーチできません（門前・テンパイ・1000点以上・残りツモ3枚以上が必要）";
     const idx = useDrawn ? -1 : a.index!;
@@ -778,6 +857,7 @@ function doDiscard(s: GameState, seat: SeatIndex, a: Extract<GameAction, { type:
     p.riichi = true;
     p.doubleRiichi = p.firstTurn && !s.callsMade;
     p.riichiDiscardIndex = p.discards.length - 1;
+    p.openRiichi = !!a.open; // オープンリーチ（R-47）
     p.ippatsu = true;
     pendingRiichi = true;
   } else if (p.riichi) {
@@ -790,7 +870,8 @@ function doDiscard(s: GameState, seat: SeatIndex, a: Extract<GameAction, { type:
   }
   s.lastDiscard = { seat, tile };
   s.rinshanDraw = false;
-  addLog(s, `${p.name} ${a.riichi ? (p.doubleRiichi ? "ダブルリーチ " : "リーチ ") : ""}打 ${tileLabel(tile)}`);
+  const riichiLabel = a.riichi ? `${a.open ? "オープン" : ""}${p.doubleRiichi ? "ダブルリーチ " : "リーチ "}` : "";
+  addLog(s, `${p.name} ${riichiLabel}打 ${tileLabel(tile)}`);
   openClaims(s, seat, tile, "discard", pendingRiichi, now);
   return undefined;
 }
@@ -929,12 +1010,23 @@ function drawKanReplacement(s: GameState, seat: SeatIndex, now: number): void {
   const p = s.players[seat];
   p.drawn = drawRinshan(s);
   p.furitenTemp = false;
-  resolveFlowerOnDrawn(s, seat);
   s.rinshanDraw = true;
   s.turnSeat = seat;
   s.stage = "discard";
   s.decisionStart = now;
   if (!p.drawn) exhaustiveDraw(s);
+}
+
+/** 花を抜く（R-24）。手番の人だけ。リーチ中でも抜ける */
+function doNuki(s: GameState, seat: SeatIndex, now: number): string | undefined {
+  if (s.stage !== "discard") return "今は花を抜けません";
+  if (s.turnSeat !== seat) return "あなたの手番ではありません";
+  if (!hasFlower(s.players[seat])) return "抜ける花がありません";
+  if (s.rinshan.length === 0) return "王牌が残っていないため花を抜けません";
+  consumeStock(s, seat, now);
+  nukiOne(s, seat);
+  s.decisionStart = now; // 補充牌を見てから改めて判断する
+  return undefined;
 }
 
 function doOwnKan(s: GameState, seat: SeatIndex, face: Face | undefined, now: number): string | undefined {
@@ -1001,6 +1093,25 @@ function applyBuyin(p: PlayerState): void {
   }
 }
 
+/** 時間超過の自動処理：その人のチップを卓の供託へ出す（C-08）。0以下になればバイイン */
+function payTimeoutChip(s: GameState, seat: SeatIndex): void {
+  const p = s.players[seat];
+  p.chips -= TIMEOUT_CHIP_PENALTY;
+  s.round.chipPot += TIMEOUT_CHIP_PENALTY;
+  applyBuyin(p);
+  addLog(s, `${p.name} 時間超過でチップ${TIMEOUT_CHIP_PENALTY}枚を供託`);
+}
+
+/** 卓の供託チップを和了者に渡す。chipDeltas にも加える。取った枚数を返す（C-08） */
+function takeChipPot(s: GameState, winnerId: string, chipDeltas: Record<string, number>): number {
+  const pot = s.round.chipPot;
+  if (pot > 0) {
+    chipDeltas[winnerId] = (chipDeltas[winnerId] ?? 0) + pot;
+    s.round.chipPot = 0;
+  }
+  return pot;
+}
+
 function doTsumo(s: GameState, seat: SeatIndex, now: number): string | undefined {
   if (s.stage !== "discard" || s.turnSeat !== seat) return "今はツモ和了できません";
   const t = evalTsumo(s, seat);
@@ -1019,7 +1130,7 @@ function winByRon(s: GameState, seat: SeatIndex, c: PendingClaim, now: number): 
   finishWin(s, seat, "ron", res, handTiles, handTiles, c.tile.face, c.fromSeat, false);
 }
 
-/** 冬：王牌の隣（生牌の末尾）から順にめくり、和了手と同じ面が出たら終了（R-23） */
+/** 冬：王牌の隣（生牌の末尾）から順にめくり、和了手と同じ面が出たら終了（R-23）。リーチ和了時だけ（R-23b） */
 function revealWinter(s: GameState, evalTiles: Tile[], melds: Meld[]): Face[] {
   const faces = new Set<Face>([...facesOf(evalTiles), ...melds.map((m) => m.face)]);
   const out: Face[] = [];
@@ -1046,18 +1157,13 @@ function finishWin(
   const ids = idsOf(s);
   const discarderId = discarderSeat === null ? undefined : s.players[discarderSeat].id;
 
-  let chipDeltas = res.chips;
-  let winterRevealed: Face[] = [];
-  if (p.flowers.includes("winter")) {
-    winterRevealed = revealWinter(s, evalTiles, p.melds);
-    chipDeltas = settleChips({
-      chips: { ...res.analysis.chips, winter: winterRevealed.length },
-      winBy,
-      winnerId: p.id,
-      discarderId,
-      players: ids,
-    });
-  }
+  // 冬はリーチして和了したときだけめくる（R-23b）
+  const winterRevealed: Face[] = p.riichi && p.flowers.includes("winter") ? revealWinter(s, evalTiles, p.melds) : [];
+  const chipCounts = { ...res.analysis.chips, winter: winterRevealed.length };
+  const ymMult = res.yakumanChipMult; // 役満チップの倍数（C-07）
+  const chipDeltas = settleChips({ chips: chipCounts, winBy, winnerId: p.id, discarderId, players: ids, yakuman: ymMult });
+  const pot = takeChipPot(s, p.id, chipDeltas); // 供託チップは和了者が総取り（C-08）
+  const chipDetail = toChipDetail(chipBreakdown(chipCounts, ymMult), pot);
 
   for (const q of s.players) {
     q.score += res.score.deltas[q.id] ?? 0;
@@ -1083,8 +1189,11 @@ function finishWin(
     yaku: res.analysis.yaku,
     han: res.analysis.han,
     rank: res.score.rank,
+    baseRank: res.score.baseRank,
+    summerUp: res.score.summerUp,
     multiplier: res.score.multiplier,
     yakumanNames,
+    chipDetail,
     deltas: res.score.deltas,
     chipDeltas,
     doraIndicators: doraFaces(s),
@@ -1108,7 +1217,7 @@ function nagashiAnalysis(): WinAnalysis {
     yakumanNames: ["流し役満"],
     han: 0,
     yaku: [],
-    dora: { aka: 0, gold: 0, omote: 0, ura: 0, autumn: 0 },
+    dora: { aka: 0, gold: 0, omote: 0, ura: 0, autumn: 0, flower: 0 },
     chips: { ura: 0, gold: 0, spring: 0, winter: 0, ippatsu: false, pocchi: false },
     summer: false,
   };
@@ -1142,6 +1251,18 @@ function exhaustiveDraw(s: GameState): void {
         players: ids,
       });
       for (const id of ids) deltas[id] += r.deltas[id];
+      // 流し役満も役満チップ（倍数1・ツモ扱い）を受け取る（C-07）
+      const analysis = nagashiAnalysis();
+      const ch = settleChips({
+        chips: analysis.chips,
+        winBy: "tsumo",
+        winnerId: p.id,
+        players: ids,
+        yakuman: yakumanMultiplierOf(rankOf(analysis)),
+      });
+      for (const id of ids) chipDeltas[id] += ch[id];
+      // 供託チップは供託リーチ棒と同じく最初の成立者へ（C-08）
+      if (i === 0) takeChipPot(s, p.id, chipDeltas);
       s.yakumanLog.push({ playerId: p.id, names: ["流し役満"] });
       addLog(s, `${p.name} 流し役満`);
     });
@@ -1154,8 +1275,10 @@ function exhaustiveDraw(s: GameState): void {
     asWin = false;
     addLog(s, `流局（聴牌：${tenpai.map((p) => p.name).join("・") || "なし"}）`);
   }
+  // 通常の流局では供託チップは繰り越す（C-08）
   for (const p of s.players) {
     p.score += deltas[p.id];
+    p.chips += chipDeltas[p.id];
     applyBuyin(p);
   }
   const result: HandResultDraw = {
@@ -1216,6 +1339,11 @@ function endGame(s: GameState, reason: string): void {
     order[0].score += s.round.riichiSticks * GAME_RULES.RIICHI_STICK;
     s.round.riichiSticks = 0;
   }
+  // 残った供託チップもトップへ（chipNet の合計を0に保つ。C-08）
+  if (s.round.chipPot > 0) {
+    order[0].chips += s.round.chipPot;
+    s.round.chipPot = 0;
+  }
   const scores: Record<string, number> = {};
   const chipNet: Record<string, number> = {};
   const buyins: Record<string, number> = {};
@@ -1265,12 +1393,15 @@ export function applyAction(
   if (seatNum < 0) return { state, error: "この卓のプレイヤーではありません" };
   if (state.stage === "end") return { state, error: "対局は終了しています" };
   const seat = seatAt(seatNum);
-  const s = clone(state);
+  const s = normalize(clone(state));
   s.clock = now;
   let err: string | undefined;
   switch (action.type) {
     case "discard":
       err = doDiscard(s, seat, action, now);
+      break;
+    case "nuki":
+      err = doNuki(s, seat, now);
       break;
     case "tsumo":
       err = doTsumo(s, seat, now);
@@ -1297,40 +1428,58 @@ export function applyAction(
   return { state: s };
 }
 
-/** 期限切れの判断を自動で処理する（打牌待ち→ツモ切り、鳴き待ち→パス） */
+/** 古い保存状態（v0.6 より前）に無い項目を補う */
+function normalize(s: GameState): GameState {
+  if (typeof s.round.chipPot !== "number") s.round.chipPot = 0;
+  if (s.nextRound && typeof s.nextRound.chipPot !== "number") s.nextRound.chipPot = s.round.chipPot;
+  for (const p of s.players) if (typeof p.openRiichi !== "boolean") p.openRiichi = false;
+  return s;
+}
+
+/**
+ * 時間切れの打牌を決める。花があれば先に全部抜き（嶺上が尽きていれば抜かずに花以外を切る）、
+ * ツモ牌があればツモ切り、なければ喰い替えにならない一番右の花以外の牌。
+ */
+function autoDiscard(s: GameState, seat: SeatIndex, now: number): string | undefined {
+  const p = s.players[seat];
+  while (hasFlower(p) && s.rinshan.length > 0) nukiOne(s, seat);
+  if (p.drawn && !isFlower(p.drawn)) return doDiscard(s, seat, { type: "discard", drawn: true }, now);
+  let idx = p.hand.length - 1;
+  while (idx > 0 && (isFlower(p.hand[idx]) || p.hand[idx].face === p.kuikaeFace)) idx--;
+  return doDiscard(s, seat, { type: "discard", index: idx }, now);
+}
+
+/**
+ * 期限切れの判断を自動で処理する（打牌待ち→ツモ切り、鳴き待ち→パス）。
+ * 期限＝持ち時間切れ＋60秒。自動処理した人はチップ1枚を卓の供託へ出す（C-08）。
+ */
 export function handleTimeout(state: GameState, now: number): GameState {
   let s = state;
   for (let guard = 0; guard < 12; guard++) {
     if (s.stage === "result" && allReady(s)) {
-      s = clone(s);
+      s = normalize(clone(s));
       s.clock = now;
       proceedToNextHand(s, now);
       continue;
     }
     const d = nextDeadline(s);
     if (d === null || now < d) break;
-    s = clone(s);
+    s = normalize(clone(s));
     s.clock = now;
     if (s.stage === "discard") {
       const seat = s.turnSeat;
       const p = s.players[seat];
       p.stock = 0;
-      let err: string | undefined;
-      if (p.drawn) {
-        err = doDiscard(s, seat, { type: "discard", drawn: true }, now);
-      } else {
-        // ポン直後など：喰い替えにならない一番右の牌を切る
-        let idx = p.hand.length - 1;
-        while (idx > 0 && p.hand[idx].face === p.kuikaeFace) idx--;
-        err = doDiscard(s, seat, { type: "discard", index: idx }, now);
-      }
+      payTimeoutChip(s, seat); // 和了・終局で供託が精算される前に出す
       addLog(s, `${p.name} 時間切れ`);
+      const err = autoDiscard(s, seat, now);
       if (err) break;
     } else if (s.stage === "claim" && s.claim) {
       const expired = s.claim.entries.filter((e) => e.response === null && deadlineOf(s, e.seat) <= now).map((e) => e.seat);
       for (const seat of expired) {
         if (s.stage !== "claim") break;
         s.players[seat].stock = 0;
+        payTimeoutChip(s, seat);
         doClaimResponse(s, seat, "pass", now);
       }
     } else {
@@ -1350,7 +1499,7 @@ export function setConnected(state: GameState, playerId: string, connected: bool
   return s;
 }
 
-function publicOf(p: PlayerState): PlayerPublic {
+function publicOf(s: GameState, p: PlayerState): PlayerPublic {
   return {
     id: p.id,
     name: p.name,
@@ -1368,7 +1517,17 @@ function publicOf(p: PlayerState): PlayerPublic {
     flowers: [...p.flowers],
     handCount: p.hand.length + (p.drawn ? 1 : 0),
     ready: p.ready,
+    isDealer: p.seat === s.round.dealerSeat,
+    // オープンリーチ中は手牌（ツモ牌を除く）を全員に公開（R-47）
+    openHand: p.riichi && p.openRiichi ? p.hand.map((t) => ({ ...t })) : null,
   };
+}
+
+/** フリテン表示（D-07）：待ちが自分の捨て牌にある／見逃し中／リーチ後見逃し */
+function furitenOf(p: PlayerState): boolean {
+  if (p.furitenTemp || p.furitenRiichi) return true;
+  const w = waitsOf(p);
+  return w.length > 0 && isFuriten(p, w);
 }
 
 export function viewFor(s: GameState, playerId: string, opts: { debug?: boolean } = {}): PlayerView {
@@ -1377,10 +1536,10 @@ export function viewFor(s: GameState, playerId: string, opts: { debug?: boolean 
   const phase: TablePhase = s.stage === "result" ? "hand_end" : s.stage === "end" ? "game_end" : "playing";
   const view: PlayerView = {
     phase,
-    round: { ...s.round },
+    round: { ...s.round, chipPot: s.round.chipPot ?? 0 },
     wallRemaining: s.live.length,
     doraIndicators: doraFaces(s),
-    players: s.players.map(publicOf),
+    players: s.players.map((p) => publicOf(s, p)),
     turnSeat: s.stage === "discard" || s.stage === "claim" ? s.turnSeat : null,
     lastDiscard: s.lastDiscard ? { seat: s.lastDiscard.seat, tile: { ...s.lastDiscard.tile } } : null,
     you: me
@@ -1392,6 +1551,10 @@ export function viewFor(s: GameState, playerId: string, opts: { debug?: boolean 
           waits: waitsOf(me),
           options: computeOptions(s, me.seat),
           deadline: personalDeadline(s, me.seat),
+          overtimeFrom: personalOvertimeFrom(s, me.seat),
+          shanten: shantenOf(me),
+          furiten: furitenOf(me),
+          discardWaits: tenpaiDiscards(me),
         }
       : null,
     result: s.result ? clone(s.result) : null,

@@ -7,6 +7,7 @@ import {
   isWinningHand,
   waits,
   isTenpai,
+  shanten,
   type Meld,
 } from "../hand";
 import type { Face } from "../tiles";
@@ -91,5 +92,33 @@ describe("和了判定の総合", () => {
   it("七対子と標準の両方を和了として検出", () => {
     expect(isWinningHand(F("1p 1p 3p 3p 5p 5p 7p 7p 9p 9p 1s 1s 1z 1z"), [])).toBe(true);
     expect(isWinningHand(F("1p 2p 3p 4p 5p 6p 7p 8p 9p 1s 1s 1s 9s 9s"), [])).toBe(true);
+  });
+});
+
+describe("シャンテン数（D-07）", () => {
+  const F = (str: string): Face[] => str.split(" ");
+  it("テンパイ（13枚）は0、和了形（14枚）は-1", () => {
+    expect(shanten(F("1p 2p 3p 7p 8p 9p 2s 3s 4s 6s 7s 9m 9m"), [])).toBe(0);
+    expect(shanten(F("1p 2p 3p 7p 8p 9p 2s 3s 4s 6s 7s 8s 9m 9m"), [])).toBe(-1);
+  });
+  it("1シャンテン・2シャンテン", () => {
+    expect(shanten(F("1p 2p 3p 7p 8p 9p 2s 3s 4s 6s 7s 9m 1z"), [])).toBe(1);
+    expect(shanten(F("1p 2p 3p 7p 8p 9p 2s 3s 6s 8s 1z 2z 3z"), [])).toBe(2);
+  });
+  it("14枚なら1枚切った後の最小（テンパイ＋浮き牌1枚＝0）", () => {
+    expect(shanten(F("1p 2p 3p 7p 8p 9p 2s 3s 4s 6s 7s 9m 9m 1z"), [])).toBe(0);
+  });
+  it("七対子・国士", () => {
+    expect(shanten(F("1p 1p 3p 3p 5p 5p 7s 7s 9s 9s 1z 1z 2z"), [])).toBe(0);
+    expect(shanten(F("1m 9m 1p 9p 1s 9s 1z 2z 3z 4z 5z 6z 6z"), [])).toBe(0);
+    expect(shanten(F("1m 9m 1p 9p 1s 9s 1z 2z 3z 4z 5z 6z 7z"), [])).toBe(0);
+  });
+  it("副露を面子として数える", () => {
+    const melds: Meld[] = [{ kind: "pon", face: "1z" }];
+    expect(shanten(F("1p 2p 3p 7p 8p 9p 2s 3s 9m 9m"), melds)).toBe(0);
+    expect(shanten(F("1p 2p 3p 7p 8p 9p 2s 3s 4s 9m 9m"), melds)).toBe(-1);
+  });
+  it("花（f*）は無視する", () => {
+    expect(shanten(F("1p 2p 3p 7p 8p 9p 2s 3s 4s 6s 7s 9m 9m f1"), [])).toBe(0);
   });
 });

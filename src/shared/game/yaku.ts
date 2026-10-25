@@ -34,6 +34,8 @@ export interface WinContext {
   riichi?: boolean;
   doubleRiichi?: boolean;
   ippatsu?: boolean;
+  /** オープンリーチ（R-47：立直に1翻加算） */
+  openRiichi?: boolean;
   doraIndicators: Face[];
   uraIndicators?: Face[];
   flowers?: Flower[];
@@ -58,6 +60,8 @@ export interface DoraDetail {
   omote: number;
   ura: number;
   autumn: number;
+  /** 抜いた花の枚数（R-25：1枚1翻のドラ扱い） */
+  flower: number;
 }
 
 export interface ChipCounts {
@@ -115,8 +119,15 @@ function countDora(ctx: WinContext): DoraDetail {
   // 秋：5の牌のドラが1つ増える（R-22）。5p/5s の枚数ぶん
   const autumnPresent = (ctx.flowers ?? []).includes("autumn");
   const autumn = autumnPresent ? (fc.get("5p") ?? 0) + (fc.get("5s") ?? 0) : 0;
+  // 花：抜いた花1枚につき1翻（R-25）。ドラ扱いなので役の有無には数えない
+  const flower = (ctx.flowers ?? []).length;
   void countInd;
-  return { aka, gold, omote, ura, autumn };
+  return { aka, gold, omote, ura, autumn, flower };
+}
+
+/** ドラ系の翻の合計（役の有無の判定には使わない） */
+export function doraHanOf(d: DoraDetail): number {
+  return d.aka + d.gold + d.omote + d.ura + d.autumn + d.flower;
 }
 
 function countDoraInd(inds: Face[], fc: Map<Face, number>): number {
@@ -329,6 +340,8 @@ function contextYaku(ctx: WinContext, menzen: boolean): { yaku: YakuLine[]; yaku
   }
   if (ctx.doubleRiichi) yaku.push({ name: "ダブル立直", han: 2 });
   else if (ctx.riichi) yaku.push({ name: "立直", han: 1 });
+  // オープン立直：立直（ダブル立直）にさらに1翻（R-47）
+  if (ctx.openRiichi && (ctx.riichi || ctx.doubleRiichi)) yaku.push({ name: "オープン立直", han: 1 });
   if (ctx.ippatsu) yaku.push({ name: "一発", han: 1 });
   if (menzen && ctx.winBy === "tsumo") yaku.push({ name: "門前清自摸和", han: 1 });
   if (ctx.haitei) yaku.push({ name: "海底摸月", han: 1 });
@@ -443,7 +456,7 @@ export function analyzeWin(ctx: WinContext): WinAnalysis {
   const concealedFaces = ctx.hand.map((t) => t.face);
   const decomps = allDecompositions(concealedFaces, ctx.melds);
   const dora = countDora(ctx);
-  const doraHan = dora.aka + dora.gold + dora.omote + dora.ura + dora.autumn;
+  const doraHan = doraHanOf(dora);
   const ctxY = contextYaku(ctx, menzen);
 
   let best: StructResult | null = null;
@@ -510,6 +523,7 @@ export function analyzeWin(ctx: WinContext): WinAnalysis {
   if (dora.gold) doraLines.push({ name: "金", han: dora.gold });
   if (dora.autumn) doraLines.push({ name: "秋ドラ", han: dora.autumn });
   if (dora.ura) doraLines.push({ name: "裏ドラ", han: dora.ura });
+  if (dora.flower) doraLines.push({ name: "花", han: dora.flower });
   const han = yakuHan + doraHan;
   return {
     valid: yakuHan > 0, // 役がある場合のみ和了可（ドラのみは無効）

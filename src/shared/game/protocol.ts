@@ -15,7 +15,9 @@ export type TablePhase = "waiting" | "playing" | "hand_end" | "game_end";
 /** プレイヤーの操作（クライアント→サーバー） */
 export type GameAction =
   /** 打牌。index は自分の手牌配列（drawn を含めない）の位置、drawn=true ならツモ牌を切る。riichi=true でリーチ宣言打牌 */
-  | { type: "discard"; index?: number; drawn?: boolean; riichi?: boolean }
+  | { type: "discard"; index?: number; drawn?: boolean; riichi?: boolean; open?: boolean }
+  /** 花を抜く（手牌かツモ牌にある花を1枚抜いて王牌から補充）。自分の手番のみ */
+  | { type: "nuki" }
   /** ツモ和了 */
   | { type: "tsumo" }
   /** ロン和了（他家の打牌に対して） */
@@ -42,6 +44,22 @@ export interface AllowedActions {
   kan: Face[];
   pass: boolean;
   nextHand: boolean;
+  /** 花を抜ける（手番で、手牌かツモ牌に花がある） */
+  nuki: boolean;
+}
+
+/** 和了時のチップ内訳（表示用） */
+export interface ChipDetail {
+  ura: number;
+  gold: number;
+  spring: number;
+  winter: number;
+  ippatsu: number;
+  pocchi: number;
+  /** 役満の倍数（ツモは各5枚×倍数、ロンは放銃者10枚×倍数） */
+  yakuman: number;
+  /** 卓の供託チップ（時間超過分）を取った枚数 */
+  pot: number;
 }
 
 /** 公開情報（全員に見える） */
@@ -68,6 +86,10 @@ export interface PlayerPublic {
   handCount: number;
   /** 局結果画面で「次へ」を押したか */
   ready: boolean;
+  /** この局の親か */
+  isDealer: boolean;
+  /** オープンリーチ中なら公開されている手牌（ツモ牌は含めない）。それ以外は null */
+  openHand: Tile[] | null;
 }
 
 export interface HandResultWin {
@@ -81,8 +103,14 @@ export interface HandResultWin {
   yaku: YakuLine[];
   han: number;
   rank: ScoreRank;
+  /** 夏のランクアップ前のランク（summerUp のとき rank と異なる） */
+  baseRank: ScoreRank;
+  /** 夏で1ランク上がったか（R-21） */
+  summerUp: boolean;
   multiplier: number;
   yakumanNames: string[];
+  /** チップの内訳 */
+  chipDetail: ChipDetail;
   /** 点数移動（本場・供託込み） */
   deltas: Record<string, number>;
   /** チップ移動 */
@@ -116,6 +144,8 @@ export interface RoundInfo {
   honba: number;
   riichiSticks: number;
   dealerSeat: SeatIndex;
+  /** 時間超過で卓に出された供託チップの枚数（次の和了者が総取り） */
+  chipPot: number;
 }
 
 /** 終局時の最終結果（対戦記録への登録に使う） */
@@ -150,8 +180,16 @@ export interface PlayerView {
     /** テンパイ時の待ち（D-05） */
     waits: Face[];
     options: AllowedActions;
-    /** 手番の残り秒（P-06） */
+    /** 自動で切られる時刻(ms)（P-06） */
     deadline: number | null;
+    /** 持ち時間（基本＋ストック）が切れてマイナス表示に入る時刻(ms)。判断中は未来の時刻も入る。判断中でなければ null。画面は現在時刻と比べて表示を切り替える */
+    overtimeFrom: number | null;
+    /** シャンテン数（0=テンパイ、-1=和了形） */
+    shanten: number;
+    /** フリテン中か */
+    furiten: boolean;
+    /** 切るとテンパイになる牌と、そのときの待ち（index は手牌位置、ツモ牌は -1） */
+    discardWaits: { index: number; waits: Face[] }[];
   } | null;
   result: HandResult | null;
   final: FinalResult | null;

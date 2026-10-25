@@ -84,6 +84,14 @@
   width: 10px;
   height: 14px;
 }
+/* オープンリーチの手牌は表向きで読める大きさに */
+.mj .opp-hand.open .tile-xs {
+  width: 14px;
+  height: 19px;
+}
+.mj .opp.in-riichi {
+  box-shadow: inset 0 0 0 1px rgba(255, 140, 120, 0.7);
+}
 .mj .opp-side {
   display: flex;
   flex-wrap: wrap;
@@ -140,6 +148,32 @@
   font-family: var(--num);
   font-size: 14px;
   color: #f3d27a;
+}
+.mj .dealer-badge {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 3px;
+  border-radius: 4px;
+  background: var(--minus);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 800;
+}
+.mj .riichi-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.mj .riichi-badge {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #ffe58a;
+  color: #7a1c12;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
 }
 .mj .riichi-stick {
   display: inline-block;
@@ -202,13 +236,39 @@
   font-family: var(--num);
   font-size: 16px;
 }
+.mj .center .chip-pot {
+  font-size: 12px;
+  opacity: 0.7;
+}
+.mj .center .chip-pot.on {
+  opacity: 1;
+  color: #f3d27a;
+  font-weight: 700;
+}
 .mj .center .dora {
   display: flex;
-  align-items: center;
-  gap: 3px;
+  align-items: flex-end;
+  gap: 10px;
 }
-.mj .center .dora span {
-  margin-right: 2px;
+.mj .center .dora-group {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+}
+.mj .center .dora-group span {
+  margin-right: 3px;
+  font-size: 12px;
+  opacity: 0.8;
+  align-self: center;
+}
+.mj .center .dora-group.real span {
+  opacity: 1;
+  font-weight: 700;
+  font-size: 14px;
+  color: #ffe58a;
+}
+.mj .center .dora-group.real .tile {
+  filter: drop-shadow(0 0 3px rgba(255, 213, 74, 0.75));
 }
 
 /* ---- 捨て牌 ---- */
@@ -266,8 +326,44 @@
 .mj .timer.hurry {
   color: var(--readout-minus);
 }
-.mj .waits {
+.mj .timer.over {
+  color: #fff;
+  background: var(--minus);
+  font-weight: 700;
+}
+.mj .overtime-note {
+  margin: -2px 0 0;
+  font-size: 11px;
+  text-align: right;
+  color: var(--readout-minus);
+}
+.mj .hand-status {
   display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  min-height: 26px;
+  font-size: 13px;
+}
+.mj .shanten {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.3);
+  font-weight: 700;
+}
+.mj .shanten.ready {
+  background: rgba(255, 229, 138, 0.22);
+  color: #ffe58a;
+}
+.mj .furiten {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--minus);
+  color: #fff;
+  font-weight: 800;
+}
+.mj .waits {
+  display: inline-flex;
   align-items: center;
   gap: 3px;
   font-size: 13px;
@@ -275,6 +371,35 @@
   border-radius: 999px;
   background: rgba(255, 229, 138, 0.16);
   align-self: flex-start;
+}
+.mj .hand-wrap {
+  position: relative;
+  max-width: 640px;
+}
+/* 選択中の牌を切ったときの待ち。絶対配置なので手牌の並びは動かない */
+.mj .sel-waits {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 10px);
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(8, 30, 24, 0.92);
+  box-shadow: 0 0 0 1px #6fe7ff;
+  font-size: 12px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.mj .sel-waits.right {
+  left: auto;
+  right: 0;
+}
+.mj .sel-waits span {
+  margin-right: 3px;
+  color: #6fe7ff;
 }
 .mj .hand {
   display: grid;
@@ -285,10 +410,11 @@
 }
 .mj .hand-tile {
   /* 押しやすさのため、見た目より縦に広い領域を取る（D-04） */
+  position: relative;
   min-height: 44px;
   display: flex;
   align-items: flex-end;
-  padding: 0;
+  padding: 0 0 5px;
   margin: 0;
   border: 0;
   background: none;
@@ -307,10 +433,33 @@
 .mj .hand-tile.locked .tile {
   filter: brightness(0.82);
 }
-.mj .hint {
-  margin: 0;
-  font-size: 12px;
-  opacity: 0.85;
+/* 切るとテンパイになる牌（D-07）：下に水色の線 */
+.mj .hand-tile.tenpai-cut::after {
+  content: "";
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  bottom: 0;
+  height: 3px;
+  border-radius: 2px;
+  background: #6fe7ff;
+}
+.mj .hand-tile.tenpai-cut .tile {
+  outline: 1.5px solid #6fe7ff;
+  outline-offset: -1px;
+  border-radius: 3px;
+}
+/* 手牌の花：抜く牌だと分かるように桃色の点線 */
+.mj .hand-tile.flower {
+  cursor: default;
+}
+.mj .hand-tile.flower .tile {
+  outline: 2px dashed #ff8fc0;
+  outline-offset: -1px;
+  border-radius: 3px;
+}
+.mj .hand-wrap.riichi-mode .hand-tile.locked .tile {
+  filter: brightness(0.6);
 }
 
 .mj .actions {
@@ -318,6 +467,7 @@
   flex-wrap: wrap;
   gap: 6px;
   justify-content: flex-end;
+  min-height: 44px;
 }
 .mj .act {
   min-height: 44px;
@@ -339,6 +489,10 @@
 .mj .act.riichi {
   background: #ffe58a;
   color: var(--felt-deep);
+}
+.mj .act.nuki {
+  border-color: #ff8fc0;
+  color: #ffc2dc;
 }
 .mj .act.ghost {
   border-color: rgba(255, 255, 255, 0.5);
@@ -423,6 +577,32 @@
 .result-overlay .rank-line strong {
   font-size: 20px;
   color: var(--minus);
+}
+.result-overlay .summer-up {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 15px;
+}
+.result-overlay .summer-up .tag {
+  padding: 0 8px;
+  border-radius: 999px;
+  background: #d0602d;
+  color: #fff;
+  font-weight: 800;
+}
+.result-overlay .summer-up .arrow {
+  color: var(--muted);
+}
+.result-overlay .summer-up strong {
+  color: var(--minus);
+  font-size: 17px;
+}
+.result-overlay .chip-detail {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
 }
 .result-overlay .ind-row {
   display: flex;

@@ -11,7 +11,7 @@ const PLAYERS = [
   { id: "C", name: "C" },
 ];
 
-/** 今できる操作を1つ選ぶ（和了→リーチ→パス→ツモ切り→次局） */
+/** 今できる操作を1つ選ぶ（和了→パス→花を抜く→リーチ→ツモ切り→次局） */
 function pickAction(state: GameState, id: string): GameAction | null {
   const v = viewFor(state, id);
   const o = v.you?.options;
@@ -19,6 +19,7 @@ function pickAction(state: GameState, id: string): GameAction | null {
   if (o.tsumo) return { type: "tsumo" };
   if (o.ron) return { type: "ron" };
   if (o.pass) return { type: "pass" };
+  if (o.nuki) return { type: "nuki" };
   if (o.riichi && o.riichiDiscards.length) {
     const i = o.riichiDiscards[0];
     return i === -1 ? { type: "discard", drawn: true, riichi: true } : { type: "discard", index: i, riichi: true };

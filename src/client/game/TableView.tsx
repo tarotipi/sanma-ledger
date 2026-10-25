@@ -3,6 +3,7 @@
 
 import { useEffect, useMemo, useState, type ReactElement } from "react";
 import type {
+  ChipDetail,
   GameAction,
   HandResult,
   PlayerPublic,
@@ -10,8 +11,8 @@ import type {
   SeatIndex,
 } from "../../shared/game/protocol";
 import type { ScoreRank } from "../../shared/game/rules";
-import type { Tile as TileT } from "../../shared/game/tiles";
-import { Tile, faceLabel } from "./Tile";
+import { nextFace, type Face, type Tile as TileT } from "../../shared/game/tiles";
+import { Tile, faceLabel, flowerOfTile } from "./Tile";
 import "./game.css";
 
 export interface TableViewProps {
@@ -52,21 +53,72 @@ function signed(n: number): string {
   return "±0";
 }
 
-/** 手番の残り秒（1秒ごとに描き直す） */
-function useSecondsLeft(deadline: number | null | undefined): number | null {
+/** 現在時刻（active の間だけ 0.25 秒ごとに描き直す） */
+function useNow(active: boolean): number {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    if (!deadline) return;
+    if (!active) return;
+    setNow(Date.now());
     const id = window.setInterval(() => setNow(Date.now()), 250);
     return () => window.clearInterval(id);
-  }, [deadline]);
-  if (!deadline) return null;
-  return Math.max(0, Math.ceil((deadline - now) / 1000));
+  }, [active]);
+  return now;
+}
+
+interface Clock {
+  /** 表示する秒（overtime のときは超過した秒） */
+  seconds: number;
+  overtime: boolean;
+  /** 超過が何秒で自動ツモ切りになるか（deadline − overtimeFrom から。分からなければ null） */
+  limit: number | null;
+}
+
+/** 持ち時間の表示（C-08）。overtimeFrom を過ぎたらマイナス秒 */
+function clockOf(deadline: number | null, overtimeFrom: number | null, now: number): Clock | null {
+  if (deadline === null && overtimeFrom === null) return null;
+  const limit = deadline !== null && overtimeFrom !== null && deadline > overtimeFrom ? Math.round((deadline - overtimeFrom) / 1000) : null;
+  if (overtimeFrom !== null && now >= overtimeFrom) {
+    return { seconds: Math.floor((now - overtimeFrom) / 1000), overtime: true, limit };
+  }
+  const target = overtimeFrom ?? deadline ?? now;
+  return { seconds: Math.max(0, Math.ceil((target - now) / 1000)), overtime: false, limit };
+}
+
+/** ドラ判定（表示用）。表示牌の次の牌・赤5・金5 */
+type IsDora = (t: TileT) => boolean;
+
+function makeIsDora(indicators: Face[]): IsDora {
+  const faces = new Set(indicators.map(nextFace));
+  return (t) => !flowerOfTile(t) && (faces.has(t.face) || !!t.red || !!t.gold);
+}
+
+function shantenText(n: number): string {
+  if (n < 0) return "和了形";
+  if (n === 0) return "テンパイ";
+  return `${n}シャンテン`;
+}
+
+const CHIP_ITEMS: { key: keyof ChipDetail; label: string }[] = [
+  { key: "ura", label: "裏ドラ" },
+  { key: "ippatsu", label: "一発" },
+  { key: "gold", label: "金" },
+  { key: "spring", label: "春" },
+  { key: "winter", label: "冬" },
+  { key: "pocchi", label: "白ポッチ" },
+  { key: "yakuman", label: "役満×" },
+  { key: "pot", label: "供託" },
+];
+
+/** チップ内訳の1行（0の項目は省く） */
+function chipDetailText(d: ChipDetail): string {
+  return CHIP_ITEMS.filter((it) => d[it.key] > 0)
+    .map((it) => `${it.label}${d[it.key]}`)
+    .join("・");
 }
 
 // ---- 部品 ----
 
-function Melds({ p, size }: { p: PlayerPublic; size: "xs" | "sm" }) {
+function Melds({ p, size, isDora }: { p: PlayerPublic; size: "xs" | "sm"; isDora: IsDora }) {
   if (p.melds.length === 0) return null;
   return (
     <div className="melds">
@@ -81,6 +133,7 @@ function Melds({ p, size }: { p: PlayerPublic; size: "xs" | "sm" }) {
                 size={size}
                 back={m.kind === "ankan" && (j === 0 || j === tiles.length - 1)}
                 sideways={m.kind !== "ankan" && j === 0}
+                dora={isDora(t)}
               />
             ))}
           </span>
@@ -110,28 +163,46 @@ function PlayerBadge({ p, view, turn }: { p: PlayerPublic; view: PlayerView; tur
         {p.name}
         {!p.connected && <em className="off">切断</em>}
       </span>
+      {p.isDealer && <span className="dealer-badge">親</span>}
       <span className="pscore">{p.score.toLocaleString()}</span>
       <span className="pchips" title={`チップ（バイイン${p.buyins}回）`}>
         ◎{p.chips}
       </span>
-      {p.riichi && <span className="riichi-stick" aria-label="リーチ中" />}
+      {p.riichi && (
+        <span className="riichi-mark">
+          <span className="riichi-badge">{p.openHand ? "オープンリーチ" : "リーチ"}</span>
+          <span className="riichi-stick" aria-hidden="true" />
+        </span>
+      )}
     </div>
   );
 }
 
-function Opponent({ p, view }: { p: PlayerPublic; view: PlayerView }) {
+function Opponent({ p, view, isDora }: { p: PlayerPublic; view: PlayerView; isDora: IsDora }) {
   const turn = view.turnSeat === p.seat && view.phase === "playing";
+  const open = p.openHand;
   return (
-    <section className="opp" aria-label={`${p.name}の席`}>
+    <section className={`opp${p.riichi ? " in-riichi" : ""}`} aria-label={`${p.name}の席`}>
       <PlayerBadge p={p} view={view} turn={turn} />
-      <div className="opp-hand" aria-label={`手牌${p.handCount}枚`}>
-        {Array.from({ length: p.handCount }, (_, i) => (
-          <Tile key={i} back size="xs" />
-        ))}
-      </div>
+      {open ? (
+        <div className="opp-hand open" aria-label="オープンリーチの手牌">
+          {open.map((t, i) => (
+            <Tile key={i} tile={t} size="xs" dora={isDora(t)} />
+          ))}
+          {Array.from({ length: Math.max(0, p.handCount - open.length) }, (_, i) => (
+            <Tile key={`b${i}`} back size="xs" />
+          ))}
+        </div>
+      ) : (
+        <div className="opp-hand" aria-label={`手牌${p.handCount}枚`}>
+          {Array.from({ length: p.handCount }, (_, i) => (
+            <Tile key={i} back size="xs" />
+          ))}
+        </div>
+      )}
       <div className="opp-side">
         <Flowers p={p} />
-        <Melds p={p} size="xs" />
+        <Melds p={p} size="xs" isDora={isDora} />
       </div>
     </section>
   );
@@ -180,12 +251,27 @@ function CenterInfo({ view }: { view: PlayerView }) {
         )}
       </div>
       <div className="wall">残り {view.wallRemaining}</div>
-      <div className="dora" aria-label="ドラ表示牌">
-        <span>ドラ表示</span>
-        {view.doraIndicators.map((f, i) => (
-          <Tile key={i} face={f} size="xs" />
-        ))}
-      </div>
+      {r && (
+        <div className={`chip-pot${r.chipPot > 0 ? " on" : ""}`} title="時間超過で出されたチップ。次の和了者が総取り（流局は繰り越し）">
+          チップ供託 ◎{r.chipPot}
+        </div>
+      )}
+      {view.doraIndicators.length > 0 && (
+        <div className="dora">
+          <div className="dora-group" aria-label="ドラ表示牌">
+            <span>ドラ表示</span>
+            {view.doraIndicators.map((f, i) => (
+              <Tile key={i} face={f} size="sm" />
+            ))}
+          </div>
+          <div className="dora-group real" aria-label="ドラ">
+            <span>ドラ</span>
+            {view.doraIndicators.map((f, i) => (
+              <Tile key={i} face={nextFace(f)} size="md" />
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -239,6 +325,14 @@ function ResultPanel({ view, result, onAction }: { view: PlayerView; result: Han
               {result.yakumanNames.length === 0 && <span>{result.han}翻　</span>}
               <strong>{rankText(result.rank, result.multiplier)}</strong>
             </p>
+            {result.summerUp && (
+              <p className="summer-up">
+                <span className="tag">夏</span>
+                {RANK_NAME[result.baseRank]}
+                <span className="arrow">→</span>
+                <strong>{rankText(result.rank, result.multiplier)}</strong>
+              </p>
+            )}
             <div className="ind-row">
               <span>ドラ表示</span>
               {result.doraIndicators.map((f, i) => (
@@ -305,6 +399,10 @@ function ResultPanel({ view, result, onAction }: { view: PlayerView; result: Han
           </tbody>
         </table>
 
+        {result.kind === "win" && chipDetailText(result.chipDetail) !== "" && (
+          <p className="chip-detail">チップ：{chipDetailText(result.chipDetail)}</p>
+        )}
+
         <button
           type="button"
           className="btn primary wide"
@@ -370,53 +468,92 @@ function FinalPanel({ view, onExit }: { view: PlayerView; onExit?: () => void })
 
 // ---- 本体 ----
 
+type RiichiMode = "normal" | "open";
+
 export function TableView({ view, onAction, onExit }: TableViewProps): ReactElement {
   const you = view.you;
   const [selected, setSelected] = useState<number | null>(null); // 手牌index、ツモ牌は -1
-  const [riichiMode, setRiichiMode] = useState(false);
-  const secs = useSecondsLeft(you?.deadline);
+  const [riichiMode, setRiichiMode] = useState<RiichiMode | null>(null);
+  const clockActive = !!you && (you.deadline !== null || you.overtimeFrom !== null);
+  const now = useNow(clockActive);
+  const clock = you ? clockOf(you.deadline, you.overtimeFrom, now) : null;
 
   const opts = you?.options;
   // 手番が変わったら選択とリーチ選択をリセット
   const turnKey = `${view.turnSeat}-${you?.hand.length}-${you?.drawn ? 1 : 0}-${opts?.discard ? 1 : 0}`;
   useEffect(() => {
     setSelected(null);
-    setRiichiMode(false);
+    setRiichiMode(null);
   }, [turnKey]);
 
   const me = useMemo(() => view.players.find((p) => p.id === you?.id) ?? null, [view.players, you?.id]);
+  const isDora = useMemo(() => makeIsDora(view.doraIndicators), [view.doraIndicators]);
   const mySeat = you?.seat ?? 0;
   const right = view.players.find((p) => p.seat === (mySeat + 1) % 3);
   const left = view.players.find((p) => p.seat === (mySeat + 2) % 3);
   const ponds = [left, right, me].filter((p): p is PlayerPublic => !!p);
 
+  const tileAt = (idx: number): TileT | null => (idx === -1 ? (you?.drawn ?? null) : (you?.hand[idx] ?? null));
+
   const canPick = (idx: number): boolean => {
     if (!opts?.discard) return false;
+    if (flowerOfTile(tileAt(idx))) return false; // 花は打牌できない（R-24）
     if (riichiMode) return opts.riichiDiscards.includes(idx);
     if (me?.riichi) return idx === -1; // リーチ後はツモ切りのみ
     return true;
   };
 
+  /** 切るとテンパイになる牌（リーチ選択中はリーチ打牌の候補） */
+  const isTenpaiCut = (idx: number): boolean => {
+    if (!opts?.discard || !you) return false;
+    if (riichiMode) return opts.riichiDiscards.includes(idx);
+    if (me?.riichi) return false;
+    return you.discardWaits.some((d) => d.index === idx);
+  };
+
   const tap = (idx: number) => {
     if (!canPick(idx)) return;
     if (selected !== idx) {
-      setSelected(idx); // 1回目：選ぶ（誤タップ防止）
+      setSelected(idx); // 1回目：選ぶ（その牌だけ浮く）
       return;
     }
+    const riichi = riichiMode !== null || undefined;
+    const open = riichiMode === "open" || undefined;
     const action: GameAction =
-      idx === -1 ? { type: "discard", drawn: true, riichi: riichiMode || undefined } : { type: "discard", index: idx, riichi: riichiMode || undefined };
+      idx === -1 ? { type: "discard", drawn: true, riichi, open } : { type: "discard", index: idx, riichi, open };
     onAction(action);
     setSelected(null);
-    setRiichiMode(false);
+    setRiichiMode(null);
   };
 
-  const anyCall = !!opts && (opts.ron || opts.pon || opts.kan.length > 0 || opts.tsumo || opts.riichi || opts.pass);
+  const startRiichi = (mode: RiichiMode) => {
+    setRiichiMode(mode);
+    if (selected !== null && !opts?.riichiDiscards.includes(selected)) setSelected(null);
+  };
+
+  const selWaits: Face[] | null =
+    selected !== null && you ? (you.discardWaits.find((d) => d.index === selected)?.waits ?? null) : null;
+  // 選択中の牌の待ち表示：手牌の左半分なら左寄せ、右半分なら右寄せ
+  const selRight = selected !== null && you ? selected === -1 || selected >= you.hand.length / 2 : false;
+
+  const playing = view.phase === "playing";
+  const showRiichiButtons = !!opts?.riichi && !me?.riichi && riichiMode === null;
+
+  const handTileClass = (idx: number, t: TileT): string => {
+    let c = "hand-tile";
+    if (idx === -1) c += " drawn";
+    if (selected === idx) c += " sel";
+    if (flowerOfTile(t)) c += " flower";
+    else if (!canPick(idx)) c += " locked";
+    if (isTenpaiCut(idx)) c += " tenpai-cut";
+    return c;
+  };
 
   return (
     <div className="mj">
       <div className="opps">
-        {left && <Opponent p={left} view={view} />}
-        {right && <Opponent p={right} view={view} />}
+        {left && <Opponent p={left} view={view} isDora={isDora} />}
+        {right && <Opponent p={right} view={view} isDora={isDora} />}
       </div>
 
       <CenterInfo view={view} />
@@ -430,60 +567,80 @@ export function TableView({ view, onAction, onExit }: TableViewProps): ReactElem
       {me && you && (
         <section className="mine" aria-label="自分の席">
           <div className="mine-head">
-            <PlayerBadge p={me} view={view} turn={view.turnSeat === me.seat && view.phase === "playing"} />
+            <PlayerBadge p={me} view={view} turn={view.turnSeat === me.seat && playing} />
             <Flowers p={me} />
-            {secs !== null && <span className={`timer${secs <= 3 ? " hurry" : ""}`}>{secs}秒</span>}
+            {clock && (
+              <span className={`timer${clock.overtime ? " over" : clock.seconds <= 3 ? " hurry" : ""}`} aria-live="polite">
+                {clock.overtime ? `−${clock.seconds}秒` : `${clock.seconds}秒`}
+              </span>
+            )}
           </div>
+          {clock?.overtime && (
+            <p className="overtime-note">
+              {clock.limit !== null ? `−${clock.limit}秒で` : "時間切れで"}自動ツモ切り＋チップ1枚を卓に供託
+            </p>
+          )}
 
-          {you.waits.length > 0 && (
-            <div className="waits" aria-label="待ち牌">
-              <span>待ち：</span>
-              {you.waits.map((f) => (
-                <Tile key={f} face={f} size="xs" />
-              ))}
+          {playing && (
+            <div className="hand-status">
+              <span className={`shanten${you.shanten <= 0 ? " ready" : ""}`}>{shantenText(you.shanten)}</span>
+              {you.furiten && <span className="furiten">フリテン</span>}
+              {you.waits.length > 0 && (
+                <span className="waits" aria-label="待ち牌">
+                  <span>待ち：</span>
+                  {you.waits.map((f) => (
+                    <Tile key={f} face={f} size="xs" />
+                  ))}
+                </span>
+              )}
             </div>
           )}
 
-          <div className="hand" role="group" aria-label="手牌">
-            {you.hand.map((t, i) => (
-              <button
-                key={i}
-                type="button"
-                className={`hand-tile${selected === i ? " sel" : ""}${canPick(i) ? "" : " locked"}`}
-                onClick={() => tap(i)}
-                aria-pressed={selected === i}
-              >
-                <Tile tile={t} size="fluid" />
-              </button>
-            ))}
-            {you.drawn && (
-              <button
-                type="button"
-                className={`hand-tile drawn${selected === -1 ? " sel" : ""}${canPick(-1) ? "" : " locked"}`}
-                onClick={() => tap(-1)}
-                aria-pressed={selected === -1}
-              >
-                <Tile tile={you.drawn} size="fluid" />
-              </button>
+          <div className={`hand-wrap${riichiMode ? " riichi-mode" : ""}`}>
+            {selWaits && selWaits.length > 0 && (
+              <div className={`sel-waits${selRight ? " right" : ""}`} aria-label="切ったときの待ち">
+                <span>{riichiMode ? "リーチ後の待ち" : "切ると待ち"}</span>
+                {selWaits.map((f) => (
+                  <Tile key={f} face={f} size="xs" />
+                ))}
+              </div>
             )}
-          </div>
-
-          <Melds p={me} size="sm" />
-
-          {selected !== null && opts?.discard && (
-            <p className="hint">{riichiMode ? "もう一度タップでリーチ宣言して切ります" : "もう一度タップで切ります"}</p>
-          )}
-
-          {anyCall && opts && view.phase === "playing" && (
-            <div className="actions">
-              {opts.riichi && !riichiMode && !me.riichi && (
-                <button type="button" className="act riichi" onClick={() => setRiichiMode(true)}>
-                  リーチ
+            <div className="hand" role="group" aria-label="手牌">
+              {you.hand.map((t, i) => (
+                <button key={i} type="button" className={handTileClass(i, t)} onClick={() => tap(i)} aria-pressed={selected === i}>
+                  <Tile tile={t} size="fluid" dora={isDora(t)} />
+                </button>
+              ))}
+              {you.drawn && (
+                <button type="button" className={handTileClass(-1, you.drawn)} onClick={() => tap(-1)} aria-pressed={selected === -1}>
+                  <Tile tile={you.drawn} size="fluid" dora={isDora(you.drawn)} />
                 </button>
               )}
+            </div>
+          </div>
+
+          <Melds p={me} size="sm" isDora={isDora} />
+
+          {playing && opts && (
+            <div className="actions">
+              {opts.nuki && (
+                <button type="button" className="act nuki" onClick={() => onAction({ type: "nuki" })}>
+                  抜く
+                </button>
+              )}
+              {showRiichiButtons && (
+                <>
+                  <button type="button" className="act riichi" onClick={() => startRiichi("normal")}>
+                    リーチ
+                  </button>
+                  <button type="button" className="act riichi" onClick={() => startRiichi("open")}>
+                    オープンリーチ
+                  </button>
+                </>
+              )}
               {riichiMode && (
-                <button type="button" className="act" onClick={() => setRiichiMode(false)}>
-                  リーチ取消
+                <button type="button" className="act" onClick={() => setRiichiMode(null)}>
+                  {riichiMode === "open" ? "オープンリーチ取消" : "リーチ取消"}
                 </button>
               )}
               {opts.tsumo && (

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { analyzeWin, type WinContext, type WinAnalysis } from "../yaku";
-import { settleWin, settleDraw, rankOf } from "../score";
-import { chipBreakdown, settleChips } from "../chips";
+import { settleWin, settleDraw, rankOf, yakumanMultiplierOf } from "../score";
+import { chipBreakdown, settleChips, toChipDetail } from "../chips";
 import { resolveWin } from "../win";
 import { parseTiles } from "../tiles";
 import type { Meld } from "../hand";
@@ -147,7 +147,7 @@ describe("夏のランクアップ（R-21）と翻→ランク", () => {
     yakumanNames: [],
     han: 0,
     yaku: [],
-    dora: { aka: 0, gold: 0, omote: 0, ura: 0, autumn: 0 },
+    dora: { aka: 0, gold: 0, omote: 0, ura: 0, autumn: 0, flower: 0 },
     chips: { ura: 0, gold: 0, spring: 0, winter: 0, ippatsu: false, pocchi: false },
     summer: false,
     ...over,
@@ -175,7 +175,7 @@ describe("点数表どおりの支払い（R-42）", () => {
     yakumanNames: [],
     han,
     yaku: [],
-    dora: { aka: 0, gold: 0, omote: 0, ura: 0, autumn: 0 },
+    dora: { aka: 0, gold: 0, omote: 0, ura: 0, autumn: 0, flower: 0 },
     chips: { ura: 0, gold: 0, spring: 0, winter: 0, ippatsu: false, pocchi: false },
     summer: false,
   });
@@ -319,5 +319,87 @@ describe("resolveWin 総合", () => {
     expect(r.score.deltas.A + r.score.deltas.B + r.score.deltas.C).toBe(0);
     expect(r.chips.A).toBe(2); // 白ポッチ1 × 他家2人（ツモ）
     expect(r.chips.A + r.chips.B + r.chips.C).toBe(0);
+  });
+});
+
+describe("R-25 花ドラ", () => {
+  const hand = parseTiles("1p 2p 3p 7p 8p 9p 2s 3s 4s 6s 7s 8s 9m 9m");
+  it("抜いた花1枚につき1翻、役一覧に「花」", () => {
+    const a = analyzeWin(baseCtx({ hand, winTile: "4s", winBy: "tsumo", flowers: ["spring", "summer"] }));
+    expect(a.valid).toBe(true);
+    expect(a.dora.flower).toBe(2);
+    expect(a.yaku).toContainEqual({ name: "花", han: 2 });
+    // 門前ツモ1＋平和1＋花2
+    expect(a.han).toBe(4);
+  });
+  it("花だけでは和了れない（ドラ扱い）", () => {
+    const a = analyzeWin(
+      baseCtx({ hand: parseTiles("1p 2p 3p 7p 8p 9p 2s 3s 4s 7s 8s 9s 1z 1z"), winTile: "1p", winBy: "ron", seatWind: "2z", flowers: ["spring"] }),
+    );
+    expect(a.dora.flower).toBe(1);
+    expect(a.valid).toBe(false);
+  });
+});
+
+describe("R-47 オープン立直", () => {
+  const hand = parseTiles("1p 2p 3p 7p 8p 9p 2s 3s 4s 6s 7s 8s 9m 9m");
+  it("立直＋1翻", () => {
+    const a = analyzeWin(baseCtx({ hand, winTile: "4s", winBy: "ron", riichi: true, openRiichi: true }));
+    expect(a.yaku).toContainEqual({ name: "立直", han: 1 });
+    expect(a.yaku).toContainEqual({ name: "オープン立直", han: 1 });
+  });
+  it("ダブル立直なら2＋1＝3翻", () => {
+    const a = analyzeWin(baseCtx({ hand, winTile: "4s", winBy: "ron", riichi: true, doubleRiichi: true, openRiichi: true }));
+    const riichiHan = a.yaku.filter((y) => y.name.includes("立直")).reduce((n, y) => n + y.han, 0);
+    expect(riichiHan).toBe(3);
+  });
+  it("リーチしていなければ付かない", () => {
+    const a = analyzeWin(baseCtx({ hand, winTile: "4s", winBy: "tsumo", openRiichi: true }));
+    expect(a.yaku.some((y) => y.name === "オープン立直")).toBe(false);
+  });
+});
+
+describe("夏の baseRank / summerUp", () => {
+  const mk = (han: number, summer: boolean): WinAnalysis => ({
+    valid: true,
+    yakuman: 0,
+    yakumanNames: [],
+    han,
+    yaku: [],
+    dora: { aka: 0, gold: 0, omote: 0, ura: 0, autumn: 0, flower: 0 },
+    chips: { ura: 0, gold: 0, spring: 0, winter: 0, ippatsu: false, pocchi: false },
+    summer,
+  });
+  it("満貫→跳満は summerUp", () => {
+    expect(rankOf(mk(5, true))).toMatchObject({ rank: "haneman", baseRank: "mangan", summerUp: true });
+  });
+  it("夏なしは baseRank=rank", () => {
+    expect(rankOf(mk(5, false))).toMatchObject({ rank: "mangan", baseRank: "mangan", summerUp: false });
+  });
+  it("数え役満は夏でも上がらない", () => {
+    expect(rankOf(mk(14, true))).toMatchObject({ rank: "yakuman", baseRank: "yakuman", summerUp: false });
+  });
+});
+
+describe("C-07 役満チップ", () => {
+  const zero = { ura: 0, gold: 0, spring: 0, winter: 0, ippatsu: false, pocchi: false };
+  it("ツモは他家が各5枚×倍数、通常の祝儀に加算", () => {
+    const d = settleChips({ chips: { ...zero, ura: 1 }, winBy: "tsumo", winnerId: "A", players: P, yakuman: 1 });
+    expect(d).toEqual({ A: 12, B: -6, C: -6 });
+  });
+  it("ロンは放銃者が10枚×倍数（ダブル役満は20）", () => {
+    const d = settleChips({ chips: zero, winBy: "ron", winnerId: "A", discarderId: "B", players: P, yakuman: 2 });
+    expect(d).toEqual({ A: 20, B: -20, C: 0 });
+  });
+  it("数え役満・夏で役満も倍数1（最低1）", () => {
+    expect(yakumanMultiplierOf({ rank: "yakuman", multiplier: 0 })).toBe(1);
+    expect(yakumanMultiplierOf({ rank: "baiman", multiplier: 0 })).toBe(0);
+  });
+  it("resolveWin：大三元ロンで放銃者10枚、ChipDetail に倍数", () => {
+    const ctx = baseCtx({ hand: parseTiles("5z 5z 5z 6z 6z 6z 7z 7z 7z 1p 2p 3p 9m 9m"), winTile: "9m", winBy: "ron" });
+    const r = resolveWin(ctx, { honba: 0, riichiSticks: 0, dealerId: "A", winnerId: "B", discarderId: "C", players: P });
+    expect(r.yakumanChipMult).toBe(1);
+    expect(r.chips).toEqual({ A: 0, B: 10, C: -10 });
+    expect(toChipDetail(chipBreakdown(r.analysis.chips, r.yakumanChipMult), 2)).toMatchObject({ yakuman: 1, pot: 2 });
   });
 });
