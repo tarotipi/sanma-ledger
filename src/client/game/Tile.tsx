@@ -284,21 +284,84 @@ function pinFace(n: number, tint: string | null): ReactElement {
   );
 }
 
-/** 1索：1本の大きな竹（緑・赤・緑の3節）と葉 */
+/** 1索の尾羽：付け根（B）からの角度（度。0=右、負=上）と長さ */
+const SOU1_TAIL_BASE: [number, number] = [17.2, 25];
+const SOU1_FEATHERS: [number, number][] = [
+  [-86, 15.5],
+  [-62, 16.5],
+  [-38, 13.6],
+  [-14, 11.2],
+  [10, 10],
+];
+
+/** 尾羽1枚（付け根から先へ細長い葉の形）と、先の目玉模様の位置 */
+function featherPath(angleDeg: number, len: number): { d: string; spot: [number, number] } {
+  const [bx, by] = SOU1_TAIL_BASE;
+  const a = (angleDeg * Math.PI) / 180;
+  const dx = Math.cos(a);
+  const dy = Math.sin(a);
+  const nx = -dy;
+  const ny = dx;
+  const tip: [number, number] = [bx + dx * len, by + dy * len];
+  const half = 2.3;
+  const mid = 0.62;
+  const c1: [number, number] = [bx + dx * len * mid + nx * half, by + dy * len * mid + ny * half];
+  const c2: [number, number] = [bx + dx * len * mid - nx * half, by + dy * len * mid - ny * half];
+  const f = (p: [number, number]) => `${p[0].toFixed(2)} ${p[1].toFixed(2)}`;
+  const d = `M${f(SOU1_TAIL_BASE)} Q${f(c1)} ${f(tip)} Q${f(c2)} ${f(SOU1_TAIL_BASE)} Z`;
+  return { d, spot: [bx + dx * len * 0.72, by + dy * len * 0.72] };
+}
+
+/** 1索：竹にとまる鳥（緑の体・赤い冠と胸・扇のように広がる尾羽）。赤牌・金牌の tint なら単色で描く */
 function souOne(tint: string | null): ReactElement {
-  const g = tint ?? COLOR.sou;
-  const r = tint ?? COLOR.red;
-  const node = tint ?? "#0e5233";
+  const body = tint ?? COLOR.sou;
+  const light = tint ?? "#2f9d63";
+  const red = tint ?? COLOR.red;
+  const beak = tint ?? COLOR.gold;
+  const leg = tint ?? "#8a5a2b";
+  // 単色のときは翼や目玉模様を地の色の線で描き分ける
+  const detail = tint ? COLOR.face : "#0e5233";
   return (
     <g>
-      <path d="M12 19 q-6 -1 -7 -6 q5 0 7 4 z" fill={g} />
-      <path d="M18 27 q6 -1 7 -6 q-5 0 -7 4 z" fill={g} />
-      <rect x={11.8} y={9.5} width={6.4} height={9} rx={2} fill={g} />
-      <rect x={11.8} y={18.5} width={6.4} height={9} fill={r} />
-      <rect x={11.8} y={27.5} width={6.4} height={9} rx={2} fill={g} />
-      <rect x={10.6} y={17.7} width={8.8} height={1.7} rx={0.8} fill={node} />
-      <rect x={10.6} y={26.7} width={8.8} height={1.7} rx={0.8} fill={node} />
-      <line x1={15} y1={11} x2={15} y2={35} stroke={COLOR.face} strokeWidth={0.7} opacity={0.6} />
+      {/* 尾羽（体の後ろ） */}
+      {SOU1_FEATHERS.map(([ang, len], i) => {
+        const { d, spot } = featherPath(ang, len);
+        return (
+          <g key={i}>
+            <path d={d} fill={i % 2 === 0 ? body : light} />
+            <circle cx={spot[0]} cy={spot[1]} r={1.15} fill={tint ? COLOR.face : red} />
+            {tint && <circle cx={spot[0]} cy={spot[1]} r={0.55} fill={tint} />}
+          </g>
+        );
+      })}
+      {/* とまり木の竹 */}
+      <rect x={8.5} y={35.2} width={14} height={1.8} rx={0.9} fill={body} />
+      <line x1={15.5} y1={35.2} x2={15.5} y2={37} stroke={COLOR.face} strokeWidth={0.6} />
+      {/* 脚 */}
+      <path d="M13.6 30 L12.9 35.4 M16.2 30 L16.7 35.4" stroke={leg} strokeWidth={0.9} strokeLinecap="round" fill="none" />
+      {/* 体・首・頭 */}
+      <ellipse cx={14.6} cy={25.4} rx={5.3} ry={5.2} transform="rotate(-18 14.6 25.4)" fill={body} />
+      <path d="M8.2 16.2 C8 19.5 9 21.6 10.6 22.6 L13.6 20.6 C12.6 19 12.6 17.2 12.8 15.6 Z" fill={body} />
+      <circle cx={10.4} cy={14.6} r={3.3} fill={body} />
+      {/* 赤い胸 */}
+      <path d="M9.4 19.6 C9 23.4 10.6 27.4 13.2 29.2 C11.6 26.2 11.4 22.6 12.4 20.4 Z" fill={red} />
+      {/* 翼 */}
+      <path
+        d="M12.4 23.2 C15.4 21.2 18.8 22.6 20 25.2 C17.6 28.6 14.2 28.8 12.6 27.4"
+        fill={tint ? "none" : detail}
+        stroke={tint ? detail : "none"}
+        strokeWidth={0.7}
+      />
+      <path d="M14 25.6 C15.6 25 17.2 25.4 18.4 26.2" fill="none" stroke={tint ? detail : light} strokeWidth={0.6} />
+      {/* 冠（赤） */}
+      <path d="M9.6 11.6 C8.6 10.6 8 9.6 7.6 8.6 C8.8 9 9.8 9.9 10.4 11.2 Z" fill={red} />
+      <path d="M10.6 11.3 C10.4 10 10.6 8.8 11.2 7.8 C11.8 8.9 11.8 10.2 11.4 11.4 Z" fill={red} />
+      <path d="M11.8 11.7 C12.4 10.6 13.2 9.8 14.2 9.4 C14 10.6 13.4 11.6 12.6 12.2 Z" fill={red} />
+      {/* くちばし */}
+      <path d="M7.4 13.8 L4.4 15.2 L7.5 16.3 Z" fill={beak} />
+      {/* 目 */}
+      <circle cx={9.7} cy={13.9} r={1} fill={COLOR.face} />
+      <circle cx={9.55} cy={13.95} r={0.5} fill={tint ?? COLOR.man} />
     </g>
   );
 }

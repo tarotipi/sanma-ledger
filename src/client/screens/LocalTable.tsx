@@ -127,16 +127,37 @@ export function LocalTableScreen() {
     }
   };
 
+  const errorBar = error && (
+    <div className="err-bar" role="alert">
+      <span>{error}</span>
+      <button type="button" onClick={() => setError(null)} aria-label="閉じる">
+        ×
+      </button>
+    </div>
+  );
+  const backButton = (
+    <button type="button" className="mj-back" onClick={() => navigate(`/g/${gid}/table`)} aria-label="卓の入口に戻る">
+      ‹
+    </button>
+  );
+
+  // 卓は上部のバーを出さず全画面で表示する。席の切り替えやデバッグ操作は卓の下（スクロールした先）に置く
   return (
     <>
-      <header className="topbar">
-        <button type="button" className="icon-btn" onClick={() => navigate(`/g/${gid}/table`)} aria-label="戻る">
-          ‹
-        </button>
-        <h1>デバッグ卓</h1>
-        <span className="me">シード {seed}</span>
-      </header>
+      {view ? (
+        <TableView view={view} onAction={(a) => act(shown, a)} onExit={deal} menu={backButton} />
+      ) : (
+        <header className="topbar">
+          <button type="button" className="icon-btn" onClick={() => navigate(`/g/${gid}/table`)} aria-label="戻る">
+            ‹
+          </button>
+          <h1>デバッグ卓</h1>
+          <span className="me">シード {seed}</span>
+        </header>
+      )}
+      {view && errorBar && <div className="mj-toast">{errorBar}</div>}
       <main className="page">
+        <h2>デバッグ卓（シード {seed}）</h2>
         <div className="seat-tabs" role="tablist" aria-label="操作する席">
           {players.map((p, i) => (
             <button
@@ -158,16 +179,8 @@ export function LocalTableScreen() {
           <input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} /> 操作が必要な人に自動で切り替える
         </label>
 
-        {error && (
-          <div className="err-bar" role="alert">
-            <span>{error}</span>
-            <button type="button" onClick={() => setError(null)} aria-label="閉じる">
-              ×
-            </button>
-          </div>
-        )}
+        {!view && errorBar}
 
-        {view && <TableView view={view} onAction={(a) => act(shown, a)} onExit={deal} />}
         {view && <DebugHands view={view} />}
 
         <div className="debug-box">

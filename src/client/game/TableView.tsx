@@ -1,7 +1,8 @@
 // 卓の描画（オンライン卓とデバッグ卓で共用）。PlayerView を受け取り、操作は onAction で返すだけ。
 // ここで点数やルールの計算はしない（全部サーバー／エンジンが決めた値を表示する）。
+// 配置：上に相手2人、中央に情報盤とそれを囲む河（自分=下・下家=右・上家=左）、下に自分の手牌と操作ボタン。
 
-import { useEffect, useMemo, useState, type ReactElement } from "react";
+import { useEffect, useMemo, useState, type ReactElement, type ReactNode } from "react";
 import type {
   ChipDetail,
   GameAction,
@@ -20,6 +21,8 @@ export interface TableViewProps {
   onAction: (action: GameAction) => void;
   /** 終局画面の「戻る」 */
   onExit?: () => void;
+  /** 画面上端の中央（相手2人の間）に置く小さな部品（戻るボタンなど） */
+  menu?: ReactNode;
 }
 
 const WIND_NAME: Record<string, string> = { "1z": "東", "2z": "南", "3z": "西", "4z": "北" };
@@ -116,6 +119,8 @@ function chipDetailText(d: ChipDetail): string {
     .join("・");
 }
 
+type Side = "left" | "right" | "bottom";
+
 // ---- 部品 ----
 
 function Melds({ p, size, isDora }: { p: PlayerPublic; size: "xs" | "sm"; isDora: IsDora }) {
@@ -154,36 +159,37 @@ function Flowers({ p }: { p: PlayerPublic }) {
   );
 }
 
-function PlayerBadge({ p, view, turn }: { p: PlayerPublic; view: PlayerView; turn: boolean }) {
-  const dealer = view.round?.dealerSeat ?? 0;
+function RiichiMark({ p }: { p: PlayerPublic }) {
+  if (!p.riichi) return null;
   return (
-    <div className={`pbadge${turn ? " turn" : ""}`}>
-      <span className="wind">{seatWindOf(p.seat, dealer)}</span>
-      <span className="pname">
-        {p.name}
-        {!p.connected && <em className="off">切断</em>}
-      </span>
-      {p.isDealer && <span className="dealer-badge">親</span>}
-      <span className="pscore">{p.score.toLocaleString()}</span>
-      <span className="pchips" title={`チップ（バイイン${p.buyins}回）`}>
-        ◎{p.chips}
-      </span>
-      {p.riichi && (
-        <span className="riichi-mark">
-          <span className="riichi-badge">{p.openHand ? "オープンリーチ" : "リーチ"}</span>
-          <span className="riichi-stick" aria-hidden="true" />
-        </span>
-      )}
-    </div>
+    <span className="riichi-mark">
+      <span className="riichi-badge">{p.openHand ? "オープンリーチ" : "リーチ"}</span>
+      <span className="riichi-stick" aria-hidden="true" />
+    </span>
   );
 }
 
-function Opponent({ p, view, isDora }: { p: PlayerPublic; view: PlayerView; isDora: IsDora }) {
+/** 相手の席（画面の左上・右上） */
+function Opponent({ p, view, side, isDora }: { p: PlayerPublic; view: PlayerView; side: "left" | "right"; isDora: IsDora }) {
   const turn = view.turnSeat === p.seat && view.phase === "playing";
+  const dealer = view.round?.dealerSeat ?? 0;
   const open = p.openHand;
   return (
-    <section className={`opp${p.riichi ? " in-riichi" : ""}`} aria-label={`${p.name}の席`}>
-      <PlayerBadge p={p} view={view} turn={turn} />
+    <section className={`opp opp-${side}${turn ? " turn" : ""}${p.riichi ? " in-riichi" : ""}`} aria-label={`${p.name}の席`}>
+      <div className="opp-head">
+        <span className="seat-wind">{seatWindOf(p.seat, dealer)}</span>
+        <span className="pname">
+          {p.name}
+          {!p.connected && <em className="off">切断</em>}
+        </span>
+        {p.isDealer && <span className="dealer-badge">親</span>}
+      </div>
+      <div className="opp-sub">
+        <span className="pchips" title={`チップ（バイイン${p.buyins}回）`}>
+          ◎{p.chips}
+        </span>
+        <RiichiMark p={p} />
+      </div>
       {open ? (
         <div className="opp-hand open" aria-label="オープンリーチの手牌">
           {open.map((t, i) => (
@@ -200,78 +206,109 @@ function Opponent({ p, view, isDora }: { p: PlayerPublic; view: PlayerView; isDo
           ))}
         </div>
       )}
-      <div className="opp-side">
-        <Flowers p={p} />
-        <Melds p={p} size="xs" isDora={isDora} />
-      </div>
+      {(p.flowers.length > 0 || p.melds.length > 0) && (
+        <div className="opp-side">
+          <Flowers p={p} />
+          <Melds p={p} size="xs" isDora={isDora} />
+        </div>
+      )}
     </section>
   );
 }
 
-function Pond({ p, view, mine }: { p: PlayerPublic; view: PlayerView; mine: boolean }) {
+/** 河。6枚・6枚で折り返し、3段目は続けて並べる。左右の河は下の河を中央盤の中心で回して置く */
+function Pond({ p, view, side }: { p: PlayerPublic; view: PlayerView; side: Side }) {
   const last = view.lastDiscard;
+  const rows: { t: TileT; i: number }[][] = [[], [], []];
+  p.discards.forEach((t, i) => {
+    rows[Math.min(2, Math.floor(i / 6))].push({ t, i });
+  });
   return (
-    <div className={`pond${mine ? " mine" : ""}`}>
-      <span className="pond-name">{p.name}</span>
-      <div className="pond-tiles">
-        {p.discards.map((t, i) => {
-          const isLast = !!last && last.seat === p.seat && i === p.discards.length - 1;
-          return (
-            <Tile
-              key={i}
-              tile={t}
-              size="sm"
-              sideways={p.riichiDiscardIndex === i}
-              dim={p.calledDiscards.includes(i)}
-              className={isLast ? "last" : undefined}
-            />
-          );
-        })}
-      </div>
+    <div className={`pond pond-${side}`} aria-label={`${p.name}の捨て牌`}>
+      {rows.map((row, r) =>
+        row.length === 0 ? null : (
+          <div key={r} className="pond-row">
+            {row.map(({ t, i }) => {
+              const isLast = !!last && last.seat === p.seat && i === p.discards.length - 1;
+              return (
+                <Tile
+                  key={i}
+                  tile={t}
+                  size="sm"
+                  sideways={p.riichiDiscardIndex === i}
+                  dim={p.calledDiscards.includes(i)}
+                  className={isLast ? "last" : undefined}
+                />
+              );
+            })}
+          </div>
+        ),
+      )}
     </div>
   );
 }
 
-function CenterInfo({ view }: { view: PlayerView }) {
+/** 中央盤の一辺：その方向に座る人の自風と点数。手番なら光る */
+function BoardEdge({ p, view, side }: { p: PlayerPublic; view: PlayerView; side: Side }) {
+  const turn = view.turnSeat === p.seat && view.phase === "playing";
+  const dealer = view.round?.dealerSeat ?? 0;
+  return (
+    <div className={`edge edge-${side}${turn ? " turn" : ""}${p.isDealer ? " dealer" : ""}`}>
+      <span className="edge-label">
+        <b className="edge-wind">{seatWindOf(p.seat, dealer)}</b>
+        <span className="edge-score">{p.score.toLocaleString()}</span>
+      </span>
+    </div>
+  );
+}
+
+function CenterBoard({ view, me, left, right }: { view: PlayerView; me?: PlayerPublic; left?: PlayerPublic; right?: PlayerPublic }) {
   const r = view.round;
   return (
-    <div className="center">
-      <div className="round">
+    <div className="mj-board" aria-label="局の情報">
+      {me && <BoardEdge p={me} view={view} side="bottom" />}
+      {right && <BoardEdge p={right} view={view} side="right" />}
+      {left && <BoardEdge p={left} view={view} side="left" />}
+      <div className="board-core">
         {r ? (
           <>
-            <strong>
+            <div className="core-round">
               {WIND_NAME[r.wind] ?? ""}
               {r.number}局
-            </strong>
-            <span>{r.honba}本場</span>
-            <span>供託{r.riichiSticks}</span>
+            </div>
+            <div className="core-wall">
+              残り<b>{view.wallRemaining}</b>枚
+            </div>
+            <div className="core-sticks">
+              {r.honba}本場・供託{r.riichiSticks}
+            </div>
           </>
         ) : (
-          <strong>待機中</strong>
+          <div className="core-round">待機中</div>
+        )}
+        {view.doraIndicators.length > 0 && (
+          <div className="core-dora">
+            <span className="dora-group" aria-label="ドラ表示牌">
+              {view.doraIndicators.map((f, i) => (
+                <Tile key={i} face={f} size="xs" />
+              ))}
+            </span>
+            <span className="dora-arrow" aria-hidden="true">
+              ▶
+            </span>
+            <span className="dora-group real" aria-label="ドラ">
+              {view.doraIndicators.map((f, i) => (
+                <Tile key={i} face={nextFace(f)} size="xs" />
+              ))}
+            </span>
+          </div>
+        )}
+        {r && (
+          <div className={`chip-pot${r.chipPot > 0 ? " on" : ""}`} title="時間超過で出されたチップ。次の和了者が総取り（流局は繰り越し）">
+            供託チップ ◎{r.chipPot}
+          </div>
         )}
       </div>
-      <div className="wall">残り {view.wallRemaining}</div>
-      {r && (
-        <div className={`chip-pot${r.chipPot > 0 ? " on" : ""}`} title="時間超過で出されたチップ。次の和了者が総取り（流局は繰り越し）">
-          チップ供託 ◎{r.chipPot}
-        </div>
-      )}
-      {view.doraIndicators.length > 0 && (
-        <div className="dora">
-          <div className="dora-group" aria-label="ドラ表示牌">
-            <span>ドラ表示</span>
-            {view.doraIndicators.map((f, i) => (
-              <Tile key={i} face={f} size="sm" />
-            ))}
-          </div>
-          <div className="dora-group real" aria-label="ドラ">
-            <span>ドラ</span>
-            {view.doraIndicators.map((f, i) => (
-              <Tile key={i} face={nextFace(f)} size="md" />
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -289,9 +326,11 @@ function ResultPanel({ view, result, onAction }: { view: PlayerView; result: Han
       <div className="result">
         {result.kind === "win" ? (
           <>
-            <h2>
-              {name(result.winnerId)}　{result.winBy === "tsumo" ? "ツモ" : `ロン（${name(result.discarderId)}から）`}
-            </h2>
+            <div className="result-head">
+              <span className={`win-by ${result.winBy}`}>{result.winBy === "tsumo" ? "ツモ" : "ロン"}</span>
+              <h2>{name(result.winnerId)}</h2>
+              {result.winBy === "ron" && <span className="from">{name(result.discarderId)}から</span>}
+            </div>
             <div className="result-hand">
               {result.hand.map((t, i) => (
                 <Tile key={i} tile={t} size="sm" />
@@ -321,16 +360,17 @@ function ResultPanel({ view, result, onAction }: { view: PlayerView; result: Han
                 ))}
               </ul>
             )}
-            <p className="rank-line">
-              {result.yakumanNames.length === 0 && <span>{result.han}翻　</span>}
+            <div className="rank-line">
+              {result.yakumanNames.length === 0 && <span className="han">{result.han}翻</span>}
               <strong>{rankText(result.rank, result.multiplier)}</strong>
-            </p>
+            </div>
             {result.summerUp && (
               <p className="summer-up">
-                <span className="tag">夏</span>
+                <span className="summer-tag">夏</span>
                 {RANK_NAME[result.baseRank]}
                 <span className="arrow">→</span>
                 <strong>{rankText(result.rank, result.multiplier)}</strong>
+                <span className="up">ランクアップ</span>
               </p>
             )}
             <div className="ind-row">
@@ -358,11 +398,13 @@ function ResultPanel({ view, result, onAction }: { view: PlayerView; result: Han
           </>
         ) : (
           <>
-            <h2>流局</h2>
+            <div className="result-head">
+              <h2>流局</h2>
+            </div>
             {result.nagashiIds.length > 0 && (
               <p className="yakuman-name">流し役満：{result.nagashiIds.map(name).join("・")}</p>
             )}
-            <p>テンパイ：{result.tenpaiIds.length ? result.tenpaiIds.map(name).join("・") : "なし"}</p>
+            <p className="draw-tenpai">テンパイ：{result.tenpaiIds.length ? result.tenpaiIds.map(name).join("・") : "なし"}</p>
             {Object.entries(result.revealed).map(([id, tiles]) => (
               <div key={id} className="revealed">
                 <small>{name(id)}</small>
@@ -392,7 +434,9 @@ function ResultPanel({ view, result, onAction }: { view: PlayerView; result: Han
                 <tr key={p.id}>
                   <td>{p.name}</td>
                   <td className={d > 0 ? "plus" : d < 0 ? "minus" : ""}>{signed(d)}</td>
-                  <td className={c > 0 ? "plus" : c < 0 ? "minus" : ""}>{c === 0 ? "—" : `${c > 0 ? "+" : "−"}${Math.abs(c)}枚`}</td>
+                  <td className={`chip-col${c > 0 ? " plus" : c < 0 ? " minus" : ""}`}>
+                    {c === 0 ? "—" : `${c > 0 ? "+" : "−"}${Math.abs(c)}枚`}
+                  </td>
                 </tr>
               );
             })}
@@ -405,7 +449,7 @@ function ResultPanel({ view, result, onAction }: { view: PlayerView; result: Han
 
         <button
           type="button"
-          className="btn primary wide"
+          className="mj-btn next"
           disabled={!canNext || meReady}
           onClick={() => onAction({ type: "next_hand" })}
         >
@@ -425,8 +469,10 @@ function FinalPanel({ view, onExit }: { view: PlayerView; onExit?: () => void })
   return (
     <div className="result-overlay" role="dialog" aria-modal="true" aria-label="終局">
       <div className="result">
-        <h2>終局</h2>
-        <table className="delta-table">
+        <div className="result-head">
+          <h2>終局</h2>
+        </div>
+        <table className="delta-table final">
           <thead>
             <tr>
               <th>順位</th>
@@ -457,7 +503,7 @@ function FinalPanel({ view, onExit }: { view: PlayerView; onExit?: () => void })
         )}
         <p className="note">対戦記録に登録しました。精算はセッションの「精算」タブで確認できます。</p>
         {onExit && (
-          <button type="button" className="btn primary wide" onClick={onExit}>
+          <button type="button" className="mj-btn next" onClick={onExit}>
             グループに戻る
           </button>
         )}
@@ -470,7 +516,7 @@ function FinalPanel({ view, onExit }: { view: PlayerView; onExit?: () => void })
 
 type RiichiMode = "normal" | "open";
 
-export function TableView({ view, onAction, onExit }: TableViewProps): ReactElement {
+export function TableView({ view, onAction, onExit, menu }: TableViewProps): ReactElement {
   const you = view.you;
   const [selected, setSelected] = useState<number | null>(null); // 手牌index、ツモ牌は -1
   const [riichiMode, setRiichiMode] = useState<RiichiMode | null>(null);
@@ -486,12 +532,11 @@ export function TableView({ view, onAction, onExit }: TableViewProps): ReactElem
     setRiichiMode(null);
   }, [turnKey]);
 
-  const me = useMemo(() => view.players.find((p) => p.id === you?.id) ?? null, [view.players, you?.id]);
+  const me = useMemo(() => view.players.find((p) => p.id === you?.id) ?? undefined, [view.players, you?.id]);
   const isDora = useMemo(() => makeIsDora(view.doraIndicators), [view.doraIndicators]);
   const mySeat = you?.seat ?? 0;
   const right = view.players.find((p) => p.seat === (mySeat + 1) % 3);
   const left = view.players.find((p) => p.seat === (mySeat + 2) % 3);
-  const ponds = [left, right, me].filter((p): p is PlayerPublic => !!p);
 
   const tileAt = (idx: number): TileT | null => (idx === -1 ? (you?.drawn ?? null) : (you?.hand[idx] ?? null));
 
@@ -538,6 +583,7 @@ export function TableView({ view, onAction, onExit }: TableViewProps): ReactElem
 
   const playing = view.phase === "playing";
   const showRiichiButtons = !!opts?.riichi && !me?.riichi && riichiMode === null;
+  const myTurn = !!opts?.discard;
 
   const handTileClass = (idx: number, t: TileT): string => {
     let c = "hand-tile";
@@ -549,131 +595,156 @@ export function TableView({ view, onAction, onExit }: TableViewProps): ReactElem
     return c;
   };
 
+  const hasActions =
+    playing &&
+    !!opts &&
+    (opts.nuki || showRiichiButtons || riichiMode !== null || opts.tsumo || opts.ron || opts.pon || opts.kan.length > 0 || opts.pass);
+
   return (
     <div className="mj">
-      <div className="opps">
-        {left && <Opponent p={left} view={view} isDora={isDora} />}
-        {right && <Opponent p={right} view={view} isDora={isDora} />}
-      </div>
+      <div className="mj-stage">
+        <header className="mj-top">
+          {left ? <Opponent p={left} view={view} side="left" isDora={isDora} /> : <span />}
+          <div className="mj-menu">{menu}</div>
+          {right ? <Opponent p={right} view={view} side="right" isDora={isDora} /> : <span />}
+        </header>
 
-      <CenterInfo view={view} />
+        {view.log.length > 0 && <p className="lastlog">{view.log[0]}</p>}
 
-      <div className="ponds">
-        {ponds.map((p) => (
-          <Pond key={p.id} p={p} view={view} mine={p.id === me?.id} />
-        ))}
-      </div>
-
-      {me && you && (
-        <section className="mine" aria-label="自分の席">
-          <div className="mine-head">
-            <PlayerBadge p={me} view={view} turn={view.turnSeat === me.seat && playing} />
-            <Flowers p={me} />
-            {clock && (
-              <span className={`timer${clock.overtime ? " over" : clock.seconds <= 3 ? " hurry" : ""}`} aria-live="polite">
-                {clock.overtime ? `−${clock.seconds}秒` : `${clock.seconds}秒`}
-              </span>
-            )}
+        <div className="mj-field">
+          <div className="field">
+            <CenterBoard view={view} me={me} left={left} right={right} />
+            {left && <Pond p={left} view={view} side="left" />}
+            {right && <Pond p={right} view={view} side="right" />}
+            {me && <Pond p={me} view={view} side="bottom" />}
           </div>
-          {clock?.overtime && (
-            <p className="overtime-note">
-              {clock.limit !== null ? `−${clock.limit}秒で` : "時間切れで"}自動ツモ切り＋チップ1枚を卓に供託
-            </p>
-          )}
+        </div>
 
-          {playing && (
-            <div className="hand-status">
-              <span className={`shanten${you.shanten <= 0 ? " ready" : ""}`}>{shantenText(you.shanten)}</span>
-              {you.furiten && <span className="furiten">フリテン</span>}
-              {you.waits.length > 0 && (
-                <span className="waits" aria-label="待ち牌">
-                  <span>待ち：</span>
-                  {you.waits.map((f) => (
-                    <Tile key={f} face={f} size="xs" />
-                  ))}
-                </span>
-              )}
-            </div>
-          )}
-
-          <div className={`hand-wrap${riichiMode ? " riichi-mode" : ""}`}>
-            {selWaits && selWaits.length > 0 && (
-              <div className={`sel-waits${selRight ? " right" : ""}`} aria-label="切ったときの待ち">
-                <span>{riichiMode ? "リーチ後の待ち" : "切ると待ち"}</span>
-                {selWaits.map((f) => (
-                  <Tile key={f} face={f} size="xs" />
-                ))}
+        {me && you && (
+          <section className="mine" aria-label="自分の席">
+            {(hasActions || clock?.overtime) && (
+              <div className="float-area">
+                {clock?.overtime && (
+                  <p className="overtime-note">
+                    {clock.limit !== null ? `−${clock.limit}秒で` : "時間切れで"}自動ツモ切り＋チップ1枚を卓に供託
+                  </p>
+                )}
+                {hasActions && opts && (
+                  <div className="actions">
+                    {opts.nuki && (
+                      <button type="button" className="act nuki" onClick={() => onAction({ type: "nuki" })}>
+                        抜く
+                      </button>
+                    )}
+                    {showRiichiButtons && (
+                      <>
+                        <button type="button" className="act riichi" onClick={() => startRiichi("normal")}>
+                          リーチ
+                        </button>
+                        <button type="button" className="act riichi" onClick={() => startRiichi("open")}>
+                          オープンリーチ
+                        </button>
+                      </>
+                    )}
+                    {riichiMode && (
+                      <button type="button" className="act ghost" onClick={() => setRiichiMode(null)}>
+                        {riichiMode === "open" ? "オープンリーチ取消" : "リーチ取消"}
+                      </button>
+                    )}
+                    {opts.pon && (
+                      <button type="button" className="act call" onClick={() => onAction({ type: "pon" })}>
+                        ポン
+                      </button>
+                    )}
+                    {opts.kan.map((f) => (
+                      <button key={f} type="button" className="act call" onClick={() => onAction({ type: "kan", face: f })}>
+                        カン<small>{faceLabel(f)}</small>
+                      </button>
+                    ))}
+                    {opts.tsumo && (
+                      <button type="button" className="act win" onClick={() => onAction({ type: "tsumo" })}>
+                        ツモ
+                      </button>
+                    )}
+                    {opts.ron && (
+                      <button type="button" className="act win" onClick={() => onAction({ type: "ron" })}>
+                        ロン
+                      </button>
+                    )}
+                    {opts.pass && (
+                      <button type="button" className="act ghost" onClick={() => onAction({ type: "pass" })}>
+                        パス
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
             )}
-            <div className="hand" role="group" aria-label="手牌">
-              {you.hand.map((t, i) => (
-                <button key={i} type="button" className={handTileClass(i, t)} onClick={() => tap(i)} aria-pressed={selected === i}>
-                  <Tile tile={t} size="fluid" dora={isDora(t)} />
-                </button>
-              ))}
-              {you.drawn && (
-                <button type="button" className={handTileClass(-1, you.drawn)} onClick={() => tap(-1)} aria-pressed={selected === -1}>
-                  <Tile tile={you.drawn} size="fluid" dora={isDora(you.drawn)} />
-                </button>
-              )}
+
+            <div className="me-status">
+              <div className="me-left">
+                {me.isDealer && <span className="dealer-badge">親</span>}
+                <RiichiMark p={me} />
+                {playing && (
+                  <>
+                    <span className={`shanten${you.shanten <= 0 ? " ready" : ""}`}>{shantenText(you.shanten)}</span>
+                    {you.furiten && <span className="furiten">フリテン</span>}
+                    {you.waits.length > 0 && (
+                      <span className="waits" aria-label="待ち牌">
+                        <span>待ち</span>
+                        {you.waits.map((f) => (
+                          <Tile key={f} face={f} size="xs" />
+                        ))}
+                      </span>
+                    )}
+                  </>
+                )}
+              </div>
+              <div className="me-right">
+                <Flowers p={me} />
+                <span className="pchips" title={`チップ（バイイン${me.buyins}回）`}>
+                  ◎{me.chips}
+                </span>
+                {clock && (
+                  <span className={`timer${clock.overtime ? " over" : clock.seconds <= 3 ? " hurry" : ""}`} aria-live="polite">
+                    {clock.overtime ? `−${clock.seconds}` : clock.seconds}
+                    <small>秒</small>
+                  </span>
+                )}
+              </div>
             </div>
-          </div>
 
-          <Melds p={me} size="sm" isDora={isDora} />
+            {me.melds.length > 0 && (
+              <div className="me-melds">
+                <Melds p={me} size="sm" isDora={isDora} />
+              </div>
+            )}
 
-          {playing && opts && (
-            <div className="actions">
-              {opts.nuki && (
-                <button type="button" className="act nuki" onClick={() => onAction({ type: "nuki" })}>
-                  抜く
-                </button>
+            <div className={`hand-wrap${riichiMode ? " riichi-mode" : ""}${myTurn ? " my-turn" : ""}`}>
+              {selWaits && selWaits.length > 0 && (
+                <div className={`sel-waits${selRight ? " right" : ""}`} aria-label="切ったときの待ち">
+                  <span>{riichiMode ? "リーチ後の待ち" : "切ると待ち"}</span>
+                  {selWaits.map((f) => (
+                    <Tile key={f} face={f} size="xs" />
+                  ))}
+                </div>
               )}
-              {showRiichiButtons && (
-                <>
-                  <button type="button" className="act riichi" onClick={() => startRiichi("normal")}>
-                    リーチ
+              <div className="hand" role="group" aria-label="手牌">
+                {you.hand.map((t, i) => (
+                  <button key={i} type="button" className={handTileClass(i, t)} onClick={() => tap(i)} aria-pressed={selected === i}>
+                    <Tile tile={t} size="fluid" dora={isDora(t)} />
                   </button>
-                  <button type="button" className="act riichi" onClick={() => startRiichi("open")}>
-                    オープンリーチ
+                ))}
+                {you.drawn && (
+                  <button type="button" className={handTileClass(-1, you.drawn)} onClick={() => tap(-1)} aria-pressed={selected === -1}>
+                    <Tile tile={you.drawn} size="fluid" dora={isDora(you.drawn)} />
                   </button>
-                </>
-              )}
-              {riichiMode && (
-                <button type="button" className="act" onClick={() => setRiichiMode(null)}>
-                  {riichiMode === "open" ? "オープンリーチ取消" : "リーチ取消"}
-                </button>
-              )}
-              {opts.tsumo && (
-                <button type="button" className="act win" onClick={() => onAction({ type: "tsumo" })}>
-                  ツモ
-                </button>
-              )}
-              {opts.ron && (
-                <button type="button" className="act win" onClick={() => onAction({ type: "ron" })}>
-                  ロン
-                </button>
-              )}
-              {opts.pon && (
-                <button type="button" className="act" onClick={() => onAction({ type: "pon" })}>
-                  ポン
-                </button>
-              )}
-              {opts.kan.map((f) => (
-                <button key={f} type="button" className="act" onClick={() => onAction({ type: "kan", face: f })}>
-                  カン {faceLabel(f)}
-                </button>
-              ))}
-              {opts.pass && (
-                <button type="button" className="act ghost" onClick={() => onAction({ type: "pass" })}>
-                  パス
-                </button>
-              )}
+                )}
+              </div>
             </div>
-          )}
-        </section>
-      )}
-
-      {view.log.length > 0 && <p className="lastlog">{view.log[0]}</p>}
+          </section>
+        )}
+      </div>
 
       {view.phase === "hand_end" && view.result && <ResultPanel view={view} result={view.result} onAction={onAction} />}
       {view.phase === "game_end" && <FinalPanel view={view} onExit={onExit} />}

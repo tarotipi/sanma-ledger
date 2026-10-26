@@ -57,6 +57,96 @@ export function TableScreen() {
     conn.send({ t: "debug", on });
   };
 
+  const connBars = (
+    <>
+      {conn.status !== "open" && (
+        <div className="conn-bar" role="status">
+          {conn.status === "connecting" ? "卓に接続しています…" : "接続が切れました。つなぎ直しています…"}
+          {conn.status === "closed" && (
+            <button type="button" className="btn small" onClick={conn.reconnect}>
+              今すぐつなぐ
+            </button>
+          )}
+        </div>
+      )}
+      {conn.error && (
+        <div className="err-bar" role="alert">
+          <span>{conn.error}</span>
+          <button type="button" onClick={conn.clearError} aria-label="閉じる">
+            ×
+          </button>
+        </div>
+      )}
+    </>
+  );
+
+  const debugBox = (
+    <details className="debug-box">
+      <summary>デバッグ</summary>
+      <div className="row">
+        <label>
+          シード{" "}
+          <input
+            type="number"
+            inputMode="numeric"
+            value={seed}
+            onChange={(e) => setSeed(e.target.value)}
+            placeholder="空なら自動"
+          />
+        </label>
+        <button
+          type="button"
+          className="btn small"
+          disabled={started || seatedCount < 3}
+          onClick={() => conn.send({ t: "start", seed: seed === "" ? undefined : Number(seed) })}
+        >
+          このシードで開始
+        </button>
+      </div>
+      <div className="row">
+        <button type="button" className="btn small" onClick={toggleDebug}>
+          全員の手牌を{debug ? "隠す" : "見る"}
+        </button>
+        <button type="button" className="btn small danger ghost" onClick={() => conn.send({ t: "reset" })}>
+          卓をリセット
+        </button>
+        <button type="button" className="btn small ghost" onClick={() => navigate(`/g/${gid}/table/local`)}>
+          デバッグ卓（1画面で3人）
+        </button>
+      </div>
+      {view?.log && view.log.length > 0 && (
+        <ul className="debug-log">
+          {view.log.map((l, i) => (
+            <li key={i}>{l}</li>
+          ))}
+        </ul>
+      )}
+    </details>
+  );
+
+  // 対局中は上部のバーを出さず、卓を全画面で表示する。デバッグ欄は卓の下（スクロールした先）に置く
+  if (started && view) {
+    return (
+      <>
+        <TableView
+          view={view}
+          onAction={(action) => conn.send({ t: "action", action })}
+          onExit={() => navigate(`/g/${gid}`)}
+          menu={
+            <button type="button" className="mj-back" onClick={() => navigate(`/g/${gid}`)} aria-label="グループに戻る">
+              ‹
+            </button>
+          }
+        />
+        {(conn.status !== "open" || conn.error) && <div className="mj-toast">{connBars}</div>}
+        <main className="page">
+          {debug && <DebugHands view={view} />}
+          {debugBox}
+        </main>
+      </>
+    );
+  }
+
   return (
     <>
       <header className="topbar">
@@ -67,35 +157,9 @@ export function TableScreen() {
         <span className="me">{me?.name}</span>
       </header>
       <main className="page">
-        {conn.status !== "open" && (
-          <div className="conn-bar" role="status">
-            {conn.status === "connecting" ? "卓に接続しています…" : "接続が切れました。つなぎ直しています…"}
-            {conn.status === "closed" && (
-              <button type="button" className="btn small" onClick={conn.reconnect}>
-                今すぐつなぐ
-              </button>
-            )}
-          </div>
-        )}
-        {conn.error && (
-          <div className="err-bar" role="alert">
-            <span>{conn.error}</span>
-            <button type="button" onClick={conn.clearError} aria-label="閉じる">
-              ×
-            </button>
-          </div>
-        )}
+        {connBars}
 
-        {started && view ? (
-          <>
-            <TableView
-              view={view}
-              onAction={(action) => conn.send({ t: "action", action })}
-              onExit={() => navigate(`/g/${gid}`)}
-            />
-            {debug && <DebugHands view={view} />}
-          </>
-        ) : started ? (
+        {started ? (
           <Empty>対局中です。{mySeatIdx < 0 ? "この卓の席に座っていないため見られません。" : "読み込み中…"}</Empty>
         ) : (
           <>
@@ -150,47 +214,7 @@ export function TableScreen() {
           </>
         )}
 
-        <details className="debug-box">
-          <summary>デバッグ</summary>
-          <div className="row">
-            <label>
-              シード{" "}
-              <input
-                type="number"
-                inputMode="numeric"
-                value={seed}
-                onChange={(e) => setSeed(e.target.value)}
-                placeholder="空なら自動"
-              />
-            </label>
-            <button
-              type="button"
-              className="btn small"
-              disabled={started || seatedCount < 3}
-              onClick={() => conn.send({ t: "start", seed: seed === "" ? undefined : Number(seed) })}
-            >
-              このシードで開始
-            </button>
-          </div>
-          <div className="row">
-            <button type="button" className="btn small" onClick={toggleDebug}>
-              全員の手牌を{debug ? "隠す" : "見る"}
-            </button>
-            <button type="button" className="btn small danger ghost" onClick={() => conn.send({ t: "reset" })}>
-              卓をリセット
-            </button>
-            <button type="button" className="btn small ghost" onClick={() => navigate(`/g/${gid}/table/local`)}>
-              デバッグ卓（1画面で3人）
-            </button>
-          </div>
-          {view?.log && view.log.length > 0 && (
-            <ul className="debug-log">
-              {view.log.map((l, i) => (
-                <li key={i}>{l}</li>
-              ))}
-            </ul>
-          )}
-        </details>
+        {debugBox}
       </main>
     </>
   );
