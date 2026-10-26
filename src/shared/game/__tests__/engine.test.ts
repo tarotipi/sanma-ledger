@@ -326,6 +326,27 @@ describe("終局", () => {
     expect(s.round.wind).toBe("3z");
     expect(s.stage).toBe("discard");
   });
+
+  it("P-11 西3が終わったら40000点未満でも終局", () => {
+    let s = game(JUNK_A, B_HAND, C_HAND, "8p");
+    s.round = { ...s.round, wind: "3z", number: 3 };
+    s.players[1].score = 30000;
+    s = ronByB(s);
+    expect(s.stage).toBe("end");
+    expect(viewFor(s, "A").phase).toBe("game_end");
+    const f = s.final!;
+    expect(Math.max(...Object.values(f.scores))).toBeLessThan(40000);
+    expect(Object.values(f.chipNet).reduce((a, b) => a + b, 0)).toBe(0);
+  });
+
+  it("P-11 西2で40000点未満なら続行（西3へ）", () => {
+    let s = game(JUNK_A, B_HAND, C_HAND, "8p");
+    s.round = { ...s.round, wind: "3z", number: 2 };
+    s.players[1].score = 30000;
+    s = ronByB(s);
+    expect(s.stage).toBe("result");
+    expect(s.nextRound).toMatchObject({ wind: "3z", number: 3 });
+  });
 });
 
 describe("持ち時間（P-06, C-08）", () => {

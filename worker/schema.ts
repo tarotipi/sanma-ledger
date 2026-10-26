@@ -56,4 +56,12 @@ export const BASE_SCHEMA = [
   `CREATE INDEX IF NOT EXISTS yakuman_group ON yakuman(group_id)`,
   `CREATE TABLE IF NOT EXISTS join_attempts (
     group_id TEXT PRIMARY KEY, window_start INTEGER NOT NULL, failures INTEGER NOT NULL)`,
+  // 雀霊カプセル（G-01〜G-09）。1行＝1回分の結果。消さない（追記のみ）
+  `CREATE TABLE IF NOT EXISTS gacha_pulls (
+    id TEXT PRIMARY KEY, group_id TEXT NOT NULL, member_id TEXT NOT NULL, coin TEXT NOT NULL,
+    result TEXT NOT NULL, created_at TEXT NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS gacha_pulls_member ON gacha_pulls(group_id, member_id)`,
+  `CREATE TABLE IF NOT EXISTS gacha_profiles (
+    group_id TEXT NOT NULL, member_id TEXT NOT NULL, partner_spirit_id TEXT NOT NULL,
+    updated_at TEXT NOT NULL, PRIMARY KEY (group_id, member_id))`,
 ];

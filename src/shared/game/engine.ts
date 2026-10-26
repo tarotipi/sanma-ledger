@@ -1331,6 +1331,11 @@ function concludeHand(s: GameState, renchan: boolean, isWin: boolean): void {
     endGame(s, tobi ? "トビ" : "40000点到達");
     return;
   }
+  // P-11：西3局が終わったら、40000点以上の人がいなくても・親の連荘中でも打ち切る（終わらない半荘を防ぐため）
+  if (r.wind === "3z" && r.number >= GAME_RULES.LAST_WEST_HAND) {
+    endGame(s, "西場打ち切り");
+    return;
+  }
   const next: RoundInfo = { ...r };
   if (renchan) {
     next.honba = r.honba + 1;
@@ -1340,7 +1345,7 @@ function concludeHand(s: GameState, renchan: boolean, isWin: boolean): void {
     next.number = r.number + 1;
     if (next.number > 3) {
       next.number = 1;
-      // 東→南→西。西のあとも西のまま続ける（誰かが40000点に届くまで）
+      // 東→南→西。西3が終わったら上で打ち切るので、西のあとに続くことはない（P-11）
       next.wind = r.wind === "1z" ? "2z" : "3z";
     }
   }

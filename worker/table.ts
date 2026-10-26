@@ -216,14 +216,13 @@ export class MahjongTable extends DurableObject<TableEnv> {
         return;
       }
       case "reset": {
-        const ended = this.game ? this.view(this.game, lobby.seats[0]!.memberId).phase === "game_end" : true;
-        if (lobby.started && !ended && !att.debug) {
-          throw new Error("対局中はリセットできません（デバッグ表示中のみ可能）。");
-        }
+        // P-10：途中で止まった対局を終わらせるため、対局中でも誰の接続からでも受け付ける（確認なし）。
+        // 終局前の対局は game を捨てるので maybeRegister が動かず、対戦記録へは登録されない（破棄）。
+        const ended = this.game && lobby.seats[0] ? this.view(this.game, lobby.seats[0].memberId).phase === "game_end" : true;
         this.game = null;
         this.lobby = { ...EMPTY_LOBBY, gameNo: lobby.gameNo };
         await this.ctx.storage.deleteAlarm();
-        this.log("reset");
+        this.log(`reset by=${att.memberId ?? "-"} ${lobby.started && !ended ? "discarded" : "after-end"}`);
         break;
       }
       default:

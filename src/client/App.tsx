@@ -8,6 +8,8 @@ import { SettingsView } from "./screens/Settings";
 import { YakumanView } from "./screens/Yakuman";
 import { TableScreen } from "./screens/Table";
 import { LocalTableScreen } from "./screens/LocalTable";
+import { GachaScreen } from "./screens/Gacha";
+import { ProfileScreen } from "./screens/Profile";
 import { Empty } from "./ui";
 import { bgUrl } from "./logic";
 
@@ -76,6 +78,8 @@ function GroupScreen({ route }: { route: Exclude<ReturnType<typeof parseRoute>, 
   if (!saved.memberId || !state.members.some((m) => m.id === saved.memberId)) return <PickMember />;
   if (route.name === "session") return <SessionScreen sid={route.sid} tab={route.tab} />;
   if (route.name === "table") return route.local ? <LocalTableScreen /> : <TableScreen />;
+  if (route.name === "gacha") return <GachaScreen />;
+  if (route.name === "profile") return <ProfileScreen />;
   if (route.name === "groupTab") {
     const title = { stats: "通算成績", history: "変更履歴", settings: "設定", yakuman: "役満の殿堂" }[route.tab];
     return (

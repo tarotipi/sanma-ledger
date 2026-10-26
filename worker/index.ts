@@ -2,6 +2,18 @@ import { Hono, type Context } from "hono";
 import { BASE_SCHEMA } from "./schema";
 import { RULES, sumIsZero, validateGame } from "../src/shared/mahjong";
 import type { Score } from "../src/shared/types";
+import {
+  GACHA,
+  STARTER_SPIRIT_ID,
+  buildCollection,
+  coinBalance,
+  earnedCoins,
+  pullCost,
+  rollPull,
+  spentCoins,
+  type CoinType,
+  type PullResult,
+} from "../src/shared/gacha";
 
 type Env = {
   DB: D1Database;
@@ -1042,6 +1054,144 @@ for (const action of ["delete", "restore"] as const) {
     return c.json({ ok: true });
   });
 }
+
+// ---------- 雀霊カプセル（G-01〜G-09。点数には影響しない） ----------
+// 注意：下の「/api/* → 404」より前に登録すること。図鑑は本人（x-member）の分だけ返す。
+
+function gachaMember(c: C): string {
+  const m = c.get("actor").memberId;
+  if (!m) throw new HttpError(400, "先にグループ画面で自分の名前を選んでください。");
+  return m;
+}
+
+type PullRow = { id: string; coin: CoinType; result: PullResult; createdAt: string };
+
+async function gachaPulls(c: C, gid: string, memberId: string): Promise<PullRow[]> {
+  const r = await c.env.DB.prepare(
+    `SELECT id, coin, result, created_at FROM gacha_pulls WHERE group_id=? AND member_id=? ORDER BY created_at, rowid`,
+  )
+    .bind(gid, memberId)
+    .all<Row>();
+  return r.results.map((x) => ({ id: String(x.id), coin: x.coin as CoinType, result: j<PullResult>(x.result), createdAt: String(x.created_at) }));
+}
+
+async function gachaEarned(c: C, gid: string, memberId: string) {
+  // GACHA.START 以降に作られた・論理削除されていない（対局も）半荘のうち、自分が参加したもの
+  const games = await c.env.DB.prepare(
+    `SELECT g.scores FROM games g JOIN sessions s ON s.id=g.session_id
+     WHERE g.group_id=? AND g.deleted_at IS NULL AND s.deleted_at IS NULL AND g.created_at>=?`,
+  )
+    .bind(gid, GACHA.START)
+    .all<Row>();
+  const mine: number[] = [];
+  for (const g of games.results) {
+    const sc = j<Score[]>(g.scores).find((x) => x.memberId === memberId);
+    if (sc) mine.push(sc.score);
+  }
+  const y = await c.env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM yakuman y JOIN sessions s ON s.id=y.session_id
+     WHERE y.group_id=? AND y.member_id=? AND y.deleted_at IS NULL AND s.deleted_at IS NULL AND y.created_at>=?`,
+  )
+    .bind(gid, memberId, GACHA.START)
+    .first<{ n: number }>();
+  return earnedCoins(mine, y?.n ?? 0);
+}
+
+async function gachaPartner(c: C, gid: string, memberId: string): Promise<string> {
+  const r = await c.env.DB.prepare(`SELECT partner_spirit_id FROM gacha_profiles WHERE group_id=? AND member_id=?`)
+    .bind(gid, memberId)
+    .first<Row>();
+  return r ? String(r.partner_spirit_id) : STARTER_SPIRIT_ID;
+}
+
+app.get("/api/g/:gid/gacha", async (c) => {
+  const gid = c.get("actor").groupId;
+  const me = gachaMember(c);
+  const [pulls, earned, partner] = await Promise.all([gachaPulls(c, gid, me), gachaEarned(c, gid, me), gachaPartner(c, gid, me)]);
+  const spent = spentCoins(pulls);
+  return c.json({ earned, spent, coins: coinBalance(earned, spent), pulls, partner });
+});
+
+app.post("/api/g/:gid/gacha/pull", async (c) => {
+  const gid = c.get("actor").groupId;
+  const me = gachaMember(c);
+  const b = await body<{ coin: unknown; count: unknown }>(c);
+  if (b.coin !== "normal" && b.coin !== "yakuman") throw new HttpError(400, "コインの種類を選んでください。");
+  if (b.count !== 1 && b.count !== GACHA.MULTI) throw new HttpError(400, "回数が正しくありません。");
+  const coin: CoinType = b.coin;
+  const count = b.count;
+  const [pulls, earned] = await Promise.all([gachaPulls(c, gid, me), gachaEarned(c, gid, me)]);
+  const before = coinBalance(earned, spentCoins(pulls));
+  if (before[coin] < pullCost(coin, count)) throw new HttpError(400, "コインが足りません");
+  const rnd = crypto.getRandomValues(new Uint32Array(count * 3));
+  const r = (i: number) => rnd[i] / 2 ** 32;
+  const owned = buildCollection(pulls.map((p) => p.result)).spirits;
+  const results: PullResult[] = [];
+  const t = now();
+  const stmts: D1PreparedStatement[] = [];
+  for (let i = 0; i < count; i++) {
+    const res = rollPull(coin, r(i * 3), r(i * 3 + 1), r(i * 3 + 2), owned);
+    if (res.kind === "spirit") owned.push(res.spiritId); // 10連の途中経過を次の重複判定へ反映
+    results.push(res);
+    const id = uid();
+    stmts.push(
+      c.env.DB.prepare(`INSERT INTO gacha_pulls(id,group_id,member_id,coin,result,created_at) VALUES (?,?,?,?,?,?)`).bind(
+        id,
+        gid,
+        me,
+        coin,
+        JSON.stringify(res),
+        t,
+      ),
+      audit(c, "gacha_pulls", id, "insert", null, { memberId: me, coin, result: res }),
+    );
+  }
+  await c.env.DB.batch(stmts);
+  const coins = coinBalance(earned, spentCoins([...pulls, ...results.map((x) => ({ coin: x.coin }))]));
+  return c.json({ results, coins });
+});
+
+app.put("/api/g/:gid/gacha/partner", async (c) => {
+  const gid = c.get("actor").groupId;
+  const me = gachaMember(c);
+  const b = await body<{ spiritId: unknown }>(c);
+  if (typeof b.spiritId !== "string") throw new HttpError(400, "相棒にする雀霊を選んでください。");
+  const owned = buildCollection((await gachaPulls(c, gid, me)).map((p) => p.result)).spirits;
+  if (!owned.includes(b.spiritId)) throw new HttpError(400, "まだ持っていない雀霊です。");
+  const prev = await gachaPartner(c, gid, me);
+  const t = now();
+  await c.env.DB.batch([
+    c.env.DB.prepare(
+      `INSERT INTO gacha_profiles(group_id,member_id,partner_spirit_id,updated_at) VALUES (?,?,?,?)
+       ON CONFLICT(group_id,member_id) DO UPDATE SET partner_spirit_id=excluded.partner_spirit_id, updated_at=excluded.updated_at`,
+    ).bind(gid, me, b.spiritId, t),
+    audit(c, "gacha_profiles", me, "update", { partnerSpiritId: prev }, { partnerSpiritId: b.spiritId }),
+  ]);
+  return c.json({ partner: b.spiritId });
+});
+
+// 相棒だけはグループ内で公開（卓で表示するため）。図鑑の中身は返さない
+app.get("/api/g/:gid/gacha/partners", async (c) => {
+  const gid = c.get("actor").groupId;
+  const [members, profiles, pulls] = await Promise.all([
+    c.env.DB.prepare(`SELECT id FROM members WHERE group_id=?`).bind(gid).all<Row>(),
+    c.env.DB.prepare(`SELECT member_id, partner_spirit_id FROM gacha_profiles WHERE group_id=?`).bind(gid).all<Row>(),
+    c.env.DB.prepare(`SELECT member_id, result FROM gacha_pulls WHERE group_id=? ORDER BY created_at, rowid`).bind(gid).all<Row>(),
+  ]);
+  const partnerOf = new Map(profiles.results.map((p) => [String(p.member_id), String(p.partner_spirit_id)]));
+  const pullsOf = new Map<string, PullResult[]>();
+  for (const p of pulls.results) {
+    const k = String(p.member_id);
+    pullsOf.set(k, [...(pullsOf.get(k) ?? []), j<PullResult>(p.result)]);
+  }
+  const out: Record<string, { spiritId: string; stage: number }> = {};
+  for (const m of members.results) {
+    const id = String(m.id);
+    const spiritId = partnerOf.get(id) ?? STARTER_SPIRIT_ID;
+    out[id] = { spiritId, stage: Math.max(0, buildCollection(pullsOf.get(id) ?? []).stages[spiritId] ?? 0) };
+  }
+  return c.json(out);
+});
 
 // ---------- オンライン卓（WebSocket） ----------
 // 注意：この登録は下の「/api/* → 404」より前に置くこと（Hono は登録順に照合するため、後ろだと必ず404になる）

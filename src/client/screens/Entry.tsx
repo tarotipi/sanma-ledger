@@ -262,6 +262,12 @@ export function GroupHome() {
         )}
 
         <nav className="link-row">
+          <button type="button" className="btn ghost" onClick={() => navigate(`/g/${gid}/profile`)}>
+            プロフィール
+          </button>
+          <button type="button" className="btn ghost" onClick={() => navigate(`/g/${gid}/gacha`)}>
+            雀霊カプセル
+          </button>
           <button type="button" className="btn ghost" onClick={() => navigate(`/g/${gid}/stats`)}>
             通算成績
           </button>
