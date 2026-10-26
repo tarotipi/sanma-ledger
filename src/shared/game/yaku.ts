@@ -36,6 +36,8 @@ export interface WinContext {
   ippatsu?: boolean;
   /** オープンリーチ（R-47：立直に1翻加算） */
   openRiichi?: boolean;
+  /** オープンリーチ者へ、リーチしていない人が放銃した（R-48：役満） */
+  openRiichiDealIn?: boolean;
   doraIndicators: Face[];
   uraIndicators?: Face[];
   flowers?: Flower[];
@@ -337,6 +339,11 @@ function contextYaku(ctx: WinContext, menzen: boolean): { yaku: YakuLine[]; yaku
   if (ctx.chiihou) {
     ym += 1;
     ymNames.push("地和");
+  }
+  // オープン立直への放銃（放銃者がリーチしていない場合のみ）は役満（R-48）
+  if (ctx.openRiichiDealIn && ctx.winBy === "ron") {
+    ym += 1;
+    ymNames.push("オープン立直放銃");
   }
   if (ctx.doubleRiichi) yaku.push({ name: "ダブル立直", han: 2 });
   else if (ctx.riichi) yaku.push({ name: "立直", han: 1 });

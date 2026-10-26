@@ -93,6 +93,19 @@ describe("通常役の集計", () => {
   });
 });
 
+describe("オープン立直への放銃（R-48）", () => {
+  const hand = parseTiles("1p 2p 3p 7p 8p 9p 2s 3s 4s 6s 7s 8s 9m 9m");
+  it("リーチしていない人の放銃なら役満", () => {
+    const a = analyzeWin(baseCtx({ hand, winTile: "4s", winBy: "ron", riichi: true, openRiichi: true, openRiichiDealIn: true }));
+    expect(a.yakuman).toBe(1);
+    expect(a.yakumanNames).toContain("オープン立直放銃");
+  });
+  it("放銃者がリーチ中（フラグなし）なら通常の点数", () => {
+    const a = analyzeWin(baseCtx({ hand, winTile: "4s", winBy: "ron", riichi: true, openRiichi: true }));
+    expect(a.yakuman).toBe(0);
+  });
+});
+
 describe("役満", () => {
   it("大三元", () => {
     const ctx = baseCtx({

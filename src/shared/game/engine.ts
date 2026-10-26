@@ -552,6 +552,20 @@ export function createGame(players: { id: string; name: string }[], opts: Create
 interface WinFlags {
   chankan?: boolean;
   pocchi?: boolean;
+  /** オープンリーチ者へのリーチしていない人の放銃（R-48） */
+  openRiichiDealIn?: boolean;
+}
+
+/**
+ * R-48：和了者がオープンリーチ中で、放銃者がリーチしていないか。
+ * 放銃者のリーチ宣言牌への放銃はリーチ不成立（供託も出ない）なので「リーチしていない」扱い。
+ */
+function isOpenRiichiDealIn(s: GameState, winnerSeat: SeatIndex, fromSeat: SeatIndex, pendingRiichi: boolean): boolean {
+  const w = s.players[winnerSeat];
+  const d = s.players[fromSeat];
+  if (!(w.riichi && w.openRiichi)) return false;
+  const discarderInRiichi = d.riichi && !pendingRiichi;
+  return !discarderInRiichi;
 }
 
 function buildCtx(
@@ -586,6 +600,7 @@ function buildCtx(
     tenhou: winBy === "tsumo" && first && seat === s.round.dealerSeat,
     chiihou: winBy === "tsumo" && first && seat !== s.round.dealerSeat,
     pocchiWin: !!flags.pocchi,
+    openRiichiDealIn: winBy === "ron" && !!flags.openRiichiDealIn,
   };
 }
 
@@ -1125,7 +1140,10 @@ function winByRon(s: GameState, seat: SeatIndex, c: PendingClaim, now: number): 
   void now;
   const p = s.players[seat];
   const handTiles = [...p.hand, c.tile];
-  const res = tryWin(s, seat, handTiles, c.tile.face, "ron", c.fromSeat, { chankan: c.kind === "chankan" });
+  const res = tryWin(s, seat, handTiles, c.tile.face, "ron", c.fromSeat, {
+    chankan: c.kind === "chankan",
+    openRiichiDealIn: isOpenRiichiDealIn(s, seat, c.fromSeat, c.pendingRiichi),
+  });
   s.claim = null;
   finishWin(s, seat, "ron", res, handTiles, handTiles, c.tile.face, c.fromSeat, false);
 }
