@@ -1,12 +1,13 @@
 // オンライン卓（Phase 4）。グループ画面の「卓に入る」から来る。リンクのコピーは不要（I-07）。
 // 誰として座るかはグループのメンバーから選ぶ（I-06）。選択はこの端末に保存して次回から自動。
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { loadGroups, request } from "../api";
 import { navigate } from "../router";
 import { useGroup } from "../store";
 import { Empty } from "../ui";
 import { useTable } from "../game/useTable";
-import { DebugHands, TableView } from "../game/TableView";
+import { DebugHands, TableView, type Partner } from "../game/TableView";
 import "../game/game.css";
 
 function meKey(gid: string): string {
@@ -38,6 +39,7 @@ export function TableScreen() {
   const conn = useTable(gid, saved?.token ?? null, meId);
   const [debug, setDebug] = useState(false);
   const [seed, setSeed] = useState("");
+  const [partners, setPartners] = useState<Record<string, Partner> | undefined>(undefined);
 
   const lobby = conn.lobby;
   const seats = lobby?.seats ?? [null, null, null];
@@ -45,6 +47,26 @@ export function TableScreen() {
   const seatedCount = seats.filter(Boolean).length;
   const started = !!lobby?.started;
   const view = conn.view;
+
+  // 相棒の雀霊（表示用。取れなくても卓は動かす）。対局が始まるたびに取り直す
+  useEffect(() => {
+    if (!started) return;
+    const g = loadGroups()[gid];
+    let alive = true;
+    request<Record<string, Partner>>("GET", `/g/${gid}/gacha/partners`, { token: g?.token, memberId: g?.memberId ?? null })
+      .then((r) => {
+        if (alive) setPartners(r);
+      })
+      .catch(() => {
+        /* 相棒が出ないだけ */
+      });
+    return () => {
+      alive = false;
+    };
+  }, [gid, started]);
+
+  // 対局を終了（確認なし。途中の対局は記録されない）
+  const endGame = () => conn.send({ t: "reset" });
 
   const pickMe = (id: string) => {
     setMeId(id);
@@ -132,10 +154,18 @@ export function TableScreen() {
           view={view}
           onAction={(action) => conn.send({ t: "action", action })}
           onExit={() => navigate(`/g/${gid}`)}
+          partners={partners}
           menu={
-            <button type="button" className="mj-back" onClick={() => navigate(`/g/${gid}`)} aria-label="グループに戻る">
-              ‹
-            </button>
+            <>
+              <button type="button" className="mj-back" onClick={() => navigate(`/g/${gid}`)} aria-label="グループに戻る">
+                ‹
+              </button>
+              <button type="button" className="mj-end" onClick={endGame} aria-label="対局を終了">
+                対局を
+                <br />
+                終了
+              </button>
+            </>
           }
         />
         {(conn.status !== "open" || conn.error) && <div className="mj-toast">{connBars}</div>}
@@ -160,7 +190,12 @@ export function TableScreen() {
         {connBars}
 
         {started ? (
-          <Empty>対局中です。{mySeatIdx < 0 ? "この卓の席に座っていないため見られません。" : "読み込み中…"}</Empty>
+          <>
+            <Empty>対局中です。{mySeatIdx < 0 ? "この卓の席に座っていないため見られません。" : "読み込み中…"}</Empty>
+            <button type="button" className="btn small danger ghost lobby-end" onClick={endGame}>
+              対局を終了（途中の対局は記録されません）
+            </button>
+          </>
         ) : (
           <>
             <label className="form">

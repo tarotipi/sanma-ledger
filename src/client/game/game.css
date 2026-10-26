@@ -52,9 +52,9 @@
 
 /* ---- 卓全体（全画面） ---- */
 .mj {
-  --pt: clamp(13px, min(6.2vw, calc((100dvh - 200px) / 13.5)), 30px);
+  --pt: clamp(13px, min(6vw, calc((100dvh - 200px) / 13.9)), 30px);
   --ph: calc(var(--pt) * 4 / 3);
-  --bd: calc(var(--pt) * 6.6); /* 中央盤の一辺 */
+  --bd: calc(var(--pt) * 7); /* 中央盤の一辺（ドラを大きく見せるため 6.6→7） */
   --gap: calc(var(--pt) * 0.22); /* 中央盤と河のすき間 */
   --edge: calc(var(--pt) * 0.95); /* 中央盤の辺の帯の太さ */
   --gold-ink: #ffe58a;
@@ -110,6 +110,22 @@
   font-size: 24px;
   line-height: 1;
   cursor: pointer;
+}
+
+.mj-end {
+  width: 44px;
+  margin-top: 10px;
+  padding: 3px 0;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(0, 0, 0, 0.22);
+  color: rgba(243, 246, 242, 0.62);
+  font-size: 10px;
+  line-height: 1.25;
+  cursor: pointer;
+}
+.lobby-end {
+  align-self: center;
 }
 
 .mj .opp {
@@ -267,6 +283,48 @@
 .mj .opp-side .tile-xs.tile-side {
   width: calc(var(--pt) * 0.62 * 4 / 3);
   height: calc(var(--pt) * 0.62);
+}
+
+/* オープンリーチの待ち */
+.mj .opp-waits {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 6px;
+  border-radius: 8px;
+  background: rgba(255, 140, 40, 0.22);
+  box-shadow: inset 0 0 0 1px rgba(255, 190, 100, 0.6);
+  color: #ffd29a;
+  font-size: 12px;
+  font-weight: 800;
+}
+.mj .opp-right .opp-waits {
+  align-self: flex-end;
+}
+.mj .opp-left .opp-waits {
+  align-self: flex-start;
+}
+.mj .opp-waits span {
+  margin-right: 3px;
+}
+.mj .opp-waits .tile-sm {
+  width: max(16px, calc(var(--pt) * 0.82));
+  height: max(21.3px, calc(var(--pt) * 0.82 * 4 / 3));
+}
+.mj .p-spirit {
+  flex: none;
+  display: inline-flex;
+}
+.mj .p-spirit svg {
+  display: block;
+}
+/* 縦長の画面は上下に余裕があるので、相手の相棒を少し大きく */
+@media (orientation: portrait) and (min-height: 700px) {
+  .mj .opp .p-spirit svg {
+    width: 38px;
+    height: 38px;
+  }
 }
 
 .mj .flowers {
@@ -431,12 +489,12 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: calc(var(--pt) * 0.08);
+  gap: calc(var(--pt) * 0.03);
   text-align: center;
   line-height: 1.15;
 }
 .mj .core-round {
-  font-size: calc(var(--pt) * 0.78);
+  font-size: calc(var(--pt) * 0.74);
   font-weight: 800;
   letter-spacing: 0.06em;
 }
@@ -447,7 +505,7 @@
 .mj .core-wall b {
   margin: 0 2px;
   font-family: var(--num);
-  font-size: calc(var(--pt) * 0.74);
+  font-size: calc(var(--pt) * 0.68);
   font-weight: 600;
   color: var(--gold-ink);
 }
@@ -456,28 +514,55 @@
   opacity: 0.75;
   white-space: nowrap;
 }
+/* ドラ：実際のドラ牌を大きく、表示牌は下に小さく添える */
 .mj .core-dora {
+  --dt: calc(var(--pt) * 0.9);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(var(--pt) * 0.06);
+  margin: calc(var(--pt) * 0.04) 0;
+}
+.mj .core-dora.many {
+  --dt: calc(var(--pt) * 0.7);
+}
+.mj .dora-real {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
   align-items: center;
-  gap: 2px;
+  gap: calc(var(--pt) * 0.06);
 }
-.mj .core-dora .dora-group {
-  display: inline-flex;
+.mj .dora-label {
+  padding: 0 calc(var(--pt) * 0.16);
+  border-radius: calc(var(--pt) * 0.18);
+  background: linear-gradient(180deg, #ffe58a, #e0a420);
+  color: #3a2600;
+  font-size: calc(var(--pt) * 0.46);
+  font-weight: 900;
+  line-height: calc(var(--pt) * 0.72);
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+.mj .dora-real .tile-sm {
+  width: var(--dt);
+  height: calc(var(--dt) * 4 / 3);
+  filter: drop-shadow(0 0 calc(var(--pt) * 0.14) rgba(255, 213, 74, 0.95));
+}
+.mj .dora-ind {
+  display: flex;
+  align-items: center;
   gap: 1px;
-}
-.mj .core-dora .tile-xs {
-  width: calc(var(--pt) * 0.6);
-  height: calc(var(--pt) * 0.8);
-}
-.mj .core-dora .dora-group.real .tile {
-  filter: drop-shadow(0 0 3px rgba(255, 213, 74, 0.9));
-}
-.mj .dora-arrow {
   font-size: calc(var(--pt) * 0.34);
-  color: var(--gold-ink);
-  opacity: 0.8;
+  line-height: 1;
+  opacity: 0.75;
+}
+.mj .dora-ind span {
+  margin-right: 2px;
+}
+.mj .dora-ind .tile-xs {
+  width: calc(var(--pt) * 0.38);
+  height: calc(var(--pt) * 0.38 * 4 / 3);
 }
 .mj .chip-pot {
   padding: 0 6px;
@@ -1007,13 +1092,6 @@
   color: #ffd86b;
   font-size: 18px;
 }
-.result-overlay .summer-up .up {
-  font-size: 11px;
-  padding: 0 6px;
-  border-radius: 4px;
-  border: 1px solid #e0682f;
-  color: #ffb08a;
-}
 .result-overlay .chip-detail {
   margin: 0;
   font-size: 12px;
@@ -1113,6 +1191,172 @@
 .mj-btn.next:disabled {
   opacity: 0.55;
   cursor: default;
+}
+.result-overlay .result-btns {
+  display: flex;
+  gap: 8px;
+}
+.result-overlay .result-btns .mj-btn.next {
+  flex: 1;
+  width: auto;
+}
+.mj-btn.sub {
+  flex: none;
+  min-height: 50px;
+  padding: 0 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.08);
+  color: #f3f6f2;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.result-overlay .winner-spirit {
+  flex: none;
+  display: inline-flex;
+  filter: drop-shadow(0 0 10px rgba(255, 216, 107, 0.45));
+}
+/* 「盤面を見る」中に画面上に出す戻りボタン */
+.mj-return {
+  position: fixed;
+  top: calc(8px + env(safe-area-inset-top));
+  left: 50%;
+  z-index: 42;
+  transform: translateX(-50%);
+  min-height: 44px;
+  padding: 0 22px;
+  border-radius: 999px;
+  border: 1px solid #ffe2a0;
+  background: linear-gradient(180deg, #ffd86b, #e0a420);
+  color: #3a2600;
+  font-size: 15px;
+  font-weight: 800;
+  box-shadow:
+    0 3px 0 #8a5d00,
+    0 6px 16px rgba(0, 0, 0, 0.5);
+  cursor: pointer;
+}
+
+/* ---- 役満のカットイン ---- */
+.yk-cutin {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.86);
+  color: #fff;
+  cursor: pointer;
+  animation: yk-dim 0.25s ease-out both;
+}
+.yk-band {
+  position: absolute;
+  left: -20%;
+  right: -20%;
+  top: 50%;
+  height: min(46vh, 60vw);
+  margin-top: calc(min(46vh, 60vw) / -2);
+  transform: rotate(-12deg);
+  background:
+    linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.5) 48%, transparent 52%) no-repeat,
+    linear-gradient(180deg, #5a0f0a 0%, #b4231a 18%, #d9361f 50%, #b4231a 82%, #5a0f0a 100%);
+  background-size:
+    40% 100%,
+    100% 100%;
+  background-position:
+    -60% 0,
+    0 0;
+  box-shadow:
+    0 0 0 3px #ffd86b,
+    0 0 40px rgba(255, 180, 60, 0.6);
+  animation:
+    yk-band 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) 0.15s both,
+    yk-shine 1s ease-in-out 0.6s both;
+}
+.yk-content {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  text-align: center;
+  animation: yk-pop 0.4s cubic-bezier(0.2, 1.4, 0.4, 1) 0.45s both;
+}
+.yk-spirit svg {
+  width: min(40vw, 30vh);
+  height: min(40vw, 30vh);
+  filter: drop-shadow(0 0 18px rgba(255, 216, 107, 0.7));
+}
+.yk-title {
+  font-size: min(24vw, 22vh);
+  font-weight: 900;
+  line-height: 1;
+  letter-spacing: 0.08em;
+  background: linear-gradient(180deg, #fff6c8 0%, #ffd86b 40%, #e0a420 62%, #fff0a8 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-stroke: 1.5px #7a4a00;
+  filter: drop-shadow(0 4px 0 #5a2f00) drop-shadow(0 0 24px rgba(255, 200, 70, 0.8));
+}
+.yk-names {
+  font-size: min(7vw, 6vh);
+  font-weight: 900;
+  color: #fff3c4;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.8);
+}
+.yk-winner {
+  font-size: min(5.4vw, 4.6vh);
+  font-weight: 800;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.8);
+}
+.yk-winner small {
+  margin-left: 8px;
+  font-size: 0.8em;
+  opacity: 0.85;
+}
+.yk-skip {
+  position: absolute;
+  bottom: calc(14px + env(safe-area-inset-bottom));
+  font-size: 12px;
+  opacity: 0.6;
+}
+@keyframes yk-dim {
+  from {
+    background: rgba(0, 0, 0, 0);
+  }
+}
+@keyframes yk-band {
+  from {
+    transform: rotate(-12deg) translateX(-110%);
+  }
+}
+@keyframes yk-shine {
+  to {
+    background-position:
+      160% 0,
+      0 0;
+  }
+}
+@keyframes yk-pop {
+  from {
+    opacity: 0;
+    transform: scale(1.8);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .yk-cutin,
+  .yk-band,
+  .yk-content {
+    animation: yk-fade 0.3s ease-out both;
+  }
+}
+@keyframes yk-fade {
+  from {
+    opacity: 0;
+  }
 }
 
 /* ---- ロビー・デバッグ ---- */
@@ -1250,4 +1494,82 @@
   border: 0;
   color: #fff;
   cursor: pointer;
+}
+
+/* ---- 横画面：卓は高さいっぱい、手牌は下に大きく、相手は左右の端 ---- */
+@media (orientation: landscape) {
+  .mj {
+    /* 高さから決める：手牌の段（約124px）を引いた残りに 中央盤＋河（約10.9牌）を収める */
+    --pt: clamp(13px, min(calc((100dvh - 124px) / 11.3), 3.4vw), 36px);
+    padding-top: calc(4px + env(safe-area-inset-top));
+    padding-bottom: calc(4px + env(safe-area-inset-bottom));
+  }
+  .mj-stage {
+    max-width: none;
+    min-height: calc(100dvh - 8px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    grid-template-rows: auto auto 1fr auto;
+    grid-template-areas:
+      "menu field right"
+      "left field right"
+      "log  field right"
+      "mine mine  mine";
+    column-gap: 10px;
+  }
+  .mj-top {
+    display: contents;
+  }
+  .mj-menu {
+    grid-area: menu;
+    flex-direction: row;
+    justify-content: flex-start;
+    align-items: center;
+    gap: 8px;
+  }
+  .mj-end {
+    margin-top: 0;
+  }
+  .mj .opp-left {
+    grid-area: left;
+    align-self: start;
+    margin-top: 6px;
+  }
+  .mj .opp-right {
+    grid-area: right;
+    align-self: start;
+  }
+  .mj .pname {
+    font-size: 14px;
+  }
+  .mj .opp-hand .tile-xs {
+    width: calc(var(--pt) * 0.55);
+    height: calc(var(--pt) * 0.55 * 4 / 3);
+  }
+  .mj .opp-hand.open .tile-xs {
+    width: calc(var(--pt) * 0.62);
+    height: calc(var(--pt) * 0.62 * 4 / 3);
+  }
+  .mj .lastlog {
+    grid-area: log;
+    align-self: end;
+    margin: 0 0 4px;
+    white-space: normal;
+  }
+  .mj-field {
+    grid-area: field;
+    padding: 2px 0 6px;
+  }
+  .mj .mine {
+    grid-area: mine;
+  }
+  .mj .me-status,
+  .mj .me-melds {
+    width: 100%;
+    max-width: calc(var(--pt) * 21 + 240px);
+    margin: 0 auto;
+  }
+  .mj .hand-wrap {
+    max-width: min(100%, calc(var(--pt) * 21));
+  }
 }

@@ -2,7 +2,7 @@
 // ここで点数やルールの計算はしない（全部サーバー／エンジンが決めた値を表示する）。
 // 配置：上に相手2人、中央に情報盤とそれを囲む河（自分=下・下家=右・上家=左）、下に自分の手牌と操作ボタン。
 
-import { useEffect, useMemo, useState, type ReactElement, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from "react";
 import type {
   ChipDetail,
   GameAction,
@@ -13,8 +13,16 @@ import type {
 } from "../../shared/game/protocol";
 import type { ScoreRank } from "../../shared/game/rules";
 import { nextFace, type Face, type Tile as TileT } from "../../shared/game/tiles";
+import { waits as waitsOf } from "../../shared/game/hand";
+import { SpiritArt } from "../gacha/SpiritArt";
 import { Tile, faceLabel, flowerOfTile } from "./Tile";
 import "./game.css";
+
+/** 相棒の雀霊（GET /api/g/:gid/gacha/partners の1人分） */
+export interface Partner {
+  spiritId: string;
+  stage: number;
+}
 
 export interface TableViewProps {
   view: PlayerView;
@@ -23,6 +31,8 @@ export interface TableViewProps {
   onExit?: () => void;
   /** 画面上端の中央（相手2人の間）に置く小さな部品（戻るボタンなど） */
   menu?: ReactNode;
+  /** メンバーID→相棒の雀霊。未指定なら相棒は表示しない */
+  partners?: Record<string, Partner>;
 }
 
 const WIND_NAME: Record<string, string> = { "1z": "東", "2z": "南", "3z": "西", "4z": "北" };
@@ -121,6 +131,27 @@ function chipDetailText(d: ChipDetail): string {
 
 type Side = "left" | "right" | "bottom";
 
+function isYakumanWin(r: HandResult): boolean {
+  return r.kind === "win" && (r.yakumanNames.length > 0 || r.rank === "yakuman");
+}
+
+/** 結果の同一性（同じ結果でカットインや「盤面を見る」を繰り返さないための鍵） */
+function resultKeyOf(view: PlayerView, r: HandResult): string {
+  const rd = view.round ? `${view.round.wind}${view.round.number}-${view.round.honba}` : "";
+  const d = JSON.stringify(r.deltas);
+  return r.kind === "win" ? `${rd}|w|${r.winnerId}|${r.winTile}|${r.hand.map((t) => t.face).join("")}|${d}` : `${rd}|d|${d}`;
+}
+
+/** 名前の近くに置く小さな相棒 */
+function PartnerIcon({ partner, size, className }: { partner?: Partner; size: number; className?: string }) {
+  if (!partner) return null;
+  return (
+    <span className={`p-spirit${className ? ` ${className}` : ""}`} title="相棒">
+      <SpiritArt spiritId={partner.spiritId} stage={partner.stage} size={size} />
+    </span>
+  );
+}
+
 // ---- 部品 ----
 
 function Melds({ p, size, isDora }: { p: PlayerPublic; size: "xs" | "sm"; isDora: IsDora }) {
@@ -170,13 +201,31 @@ function RiichiMark({ p }: { p: PlayerPublic }) {
 }
 
 /** 相手の席（画面の左上・右上） */
-function Opponent({ p, view, side, isDora }: { p: PlayerPublic; view: PlayerView; side: "left" | "right"; isDora: IsDora }) {
+function Opponent({
+  p,
+  view,
+  side,
+  isDora,
+  partner,
+}: {
+  p: PlayerPublic;
+  view: PlayerView;
+  side: "left" | "right";
+  isDora: IsDora;
+  partner?: Partner;
+}) {
   const turn = view.turnSeat === p.seat && view.phase === "playing";
   const dealer = view.round?.dealerSeat ?? 0;
   const open = p.openHand;
+  // オープンリーチの待ち（公開手牌の面から。花は除く）
+  const openWaits = useMemo(
+    () => (open ? waitsOf(open.filter((t) => !flowerOfTile(t)).map((t) => t.face), p.melds) : []),
+    [open, p.melds],
+  );
   return (
     <section className={`opp opp-${side}${turn ? " turn" : ""}${p.riichi ? " in-riichi" : ""}`} aria-label={`${p.name}の席`}>
       <div className="opp-head">
+        <PartnerIcon partner={partner} size={26} />
         <span className="seat-wind">{seatWindOf(p.seat, dealer)}</span>
         <span className="pname">
           {p.name}
@@ -203,6 +252,14 @@ function Opponent({ p, view, side, isDora }: { p: PlayerPublic; view: PlayerView
         <div className="opp-hand" aria-label={`手牌${p.handCount}枚`}>
           {Array.from({ length: p.handCount }, (_, i) => (
             <Tile key={i} back size="xs" />
+          ))}
+        </div>
+      )}
+      {openWaits.length > 0 && (
+        <div className="opp-waits" aria-label="オープンリーチの待ち">
+          <span>待ち</span>
+          {openWaits.map((f) => (
+            <Tile key={f} face={f} size="sm" />
           ))}
         </div>
       )}
@@ -287,20 +344,19 @@ function CenterBoard({ view, me, left, right }: { view: PlayerView; me?: PlayerP
           <div className="core-round">待機中</div>
         )}
         {view.doraIndicators.length > 0 && (
-          <div className="core-dora">
-            <span className="dora-group" aria-label="ドラ表示牌">
+          <div className={`core-dora${view.doraIndicators.length > 3 ? " many" : ""}`}>
+            <div className="dora-real" aria-label="ドラ">
+              <span className="dora-label">ドラ</span>
+              {view.doraIndicators.map((f, i) => (
+                <Tile key={i} face={nextFace(f)} size="sm" />
+              ))}
+            </div>
+            <div className="dora-ind" aria-label="ドラ表示牌">
+              <span>表示</span>
               {view.doraIndicators.map((f, i) => (
                 <Tile key={i} face={f} size="xs" />
               ))}
-            </span>
-            <span className="dora-arrow" aria-hidden="true">
-              ▶
-            </span>
-            <span className="dora-group real" aria-label="ドラ">
-              {view.doraIndicators.map((f, i) => (
-                <Tile key={i} face={nextFace(f)} size="xs" />
-              ))}
-            </span>
+            </div>
           </div>
         )}
         {r && (
@@ -315,7 +371,22 @@ function CenterBoard({ view, me, left, right }: { view: PlayerView; me?: PlayerP
 
 // ---- 結果 ----
 
-function ResultPanel({ view, result, onAction }: { view: PlayerView; result: HandResult; onAction: (a: GameAction) => void }) {
+function ResultPanel({
+  view,
+  result,
+  onAction,
+  partners,
+  onFinal,
+  onBoard,
+}: {
+  view: PlayerView;
+  result: HandResult;
+  onAction: (a: GameAction) => void;
+  partners?: Record<string, Partner>;
+  /** 終局の局なら「最終結果へ」 */
+  onFinal?: () => void;
+  onBoard: () => void;
+}) {
   const name = (id: string | null) => view.players.find((p) => p.id === id)?.name ?? "—";
   const ready = view.players.filter((p) => p.ready).length;
   const canNext = !!view.you?.options.nextHand;
@@ -327,6 +398,7 @@ function ResultPanel({ view, result, onAction }: { view: PlayerView; result: Han
         {result.kind === "win" ? (
           <>
             <div className="result-head">
+              <PartnerIcon partner={partners?.[result.winnerId]} size={72} className="winner-spirit" />
               <span className={`win-by ${result.winBy}`}>{result.winBy === "tsumo" ? "ツモ" : "ロン"}</span>
               <h2>{name(result.winnerId)}</h2>
               {result.winBy === "ron" && <span className="from">{name(result.discarderId)}から</span>}
@@ -370,7 +442,6 @@ function ResultPanel({ view, result, onAction }: { view: PlayerView; result: Han
                 {RANK_NAME[result.baseRank]}
                 <span className="arrow">→</span>
                 <strong>{rankText(result.rank, result.multiplier)}</strong>
-                <span className="up">ランクアップ</span>
               </p>
             )}
             <div className="ind-row">
@@ -447,20 +518,72 @@ function ResultPanel({ view, result, onAction }: { view: PlayerView; result: Han
           <p className="chip-detail">チップ：{chipDetailText(result.chipDetail)}</p>
         )}
 
-        <button
-          type="button"
-          className="mj-btn next"
-          disabled={!canNext || meReady}
-          onClick={() => onAction({ type: "next_hand" })}
-        >
-          {meReady ? `待っています（${ready}/3）` : `次の局へ（${ready}/3）`}
-        </button>
+        <div className="result-btns">
+          <button type="button" className="mj-btn sub" onClick={onBoard}>
+            盤面を見る
+          </button>
+          {onFinal ? (
+            <button type="button" className="mj-btn next" onClick={onFinal}>
+              最終結果へ
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="mj-btn next"
+              disabled={!canNext || meReady}
+              onClick={() => onAction({ type: "next_hand" })}
+            >
+              {meReady ? `待っています（${ready}/3）` : `次の局へ（${ready}/3）`}
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
 }
 
-function FinalPanel({ view, onExit }: { view: PlayerView; onExit?: () => void }) {
+/** 役満のカットイン（暗転→斜めの帯→金の「役満」）。タップでスキップ */
+function YakumanCutin({
+  view,
+  result,
+  partner,
+  onDone,
+}: {
+  view: PlayerView;
+  result: Extract<HandResult, { kind: "win" }>;
+  partner?: Partner;
+  onDone: () => void;
+}) {
+  const done = useRef(onDone);
+  done.current = onDone;
+  useEffect(() => {
+    const reduce = typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const id = window.setTimeout(() => done.current(), reduce ? 900 : 1900);
+    return () => window.clearTimeout(id);
+  }, []);
+  const winner = view.players.find((p) => p.id === result.winnerId)?.name ?? "";
+  return (
+    <div className="yk-cutin" role="dialog" aria-modal="true" aria-label="役満" onClick={() => done.current()}>
+      <div className="yk-band" aria-hidden="true" />
+      <div className="yk-content">
+        {partner && (
+          <div className="yk-spirit">
+            <SpiritArt spiritId={partner.spiritId} stage={partner.stage} size={200} />
+          </div>
+        )}
+        <div className="yk-title">{rankText("yakuman", result.multiplier)}</div>
+        {result.yakumanNames.length > 0 && <div className="yk-names">{result.yakumanNames.join("・")}</div>}
+        <div className="yk-winner">
+          {winner}
+          <small>{result.winBy === "tsumo" ? "ツモ" : "ロン"}</small>
+        </div>
+      </div>
+      <small className="yk-skip">タップでスキップ</small>
+    </div>
+  );
+}
+
+function FinalPanel({ view, onExit, onBoard }: { view: PlayerView; onExit?: () => void; onBoard: () => void }) {
   const f = view.final;
   if (!f) return null;
   const rows = view.players
@@ -502,11 +625,16 @@ function FinalPanel({ view, onExit }: { view: PlayerView; onExit?: () => void })
           </p>
         )}
         <p className="note">対戦記録に登録しました。精算はセッションの「精算」タブで確認できます。</p>
-        {onExit && (
-          <button type="button" className="mj-btn next" onClick={onExit}>
-            グループに戻る
+        <div className="result-btns">
+          <button type="button" className="mj-btn sub" onClick={onBoard}>
+            盤面を見る
           </button>
-        )}
+          {onExit && (
+            <button type="button" className="mj-btn next" onClick={onExit}>
+              グループに戻る
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -516,7 +644,7 @@ function FinalPanel({ view, onExit }: { view: PlayerView; onExit?: () => void })
 
 type RiichiMode = "normal" | "open";
 
-export function TableView({ view, onAction, onExit, menu }: TableViewProps): ReactElement {
+export function TableView({ view, onAction, onExit, menu, partners }: TableViewProps): ReactElement {
   const you = view.you;
   const [selected, setSelected] = useState<number | null>(null); // 手牌index、ツモ牌は -1
   const [riichiMode, setRiichiMode] = useState<RiichiMode | null>(null);
@@ -595,6 +723,22 @@ export function TableView({ view, onAction, onExit, menu }: TableViewProps): Rea
     return c;
   };
 
+  // 局の結果・終局の流れ：（役満ならカットイン）→ 局の結果 →（終局なら）最終結果。「盤面を見る」でモーダルを閉じる
+  const result = view.result;
+  const isEnd = view.phase === "game_end";
+  const showResult = (view.phase === "hand_end" || isEnd) && !!result;
+  const rKey = result ? resultKeyOf(view, result) : "";
+  const [finalKey, setFinalKey] = useState<string | null>(null);
+  const onFinalStep = isEnd && (!result || finalKey === rKey);
+  const modalKey = `${view.phase}|${rKey}|${onFinalStep ? "f" : "r"}`;
+  const [boardKey, setBoardKey] = useState<string | null>(null);
+  const viewingBoard = (showResult || isEnd) && boardKey === modalKey;
+  const [cutinSeen, setCutinSeen] = useState<string | null>(null);
+  const cutinResult = showResult && !onFinalStep && result && result.kind === "win" && isYakumanWin(result) && cutinSeen !== rKey ? result : null;
+  useEffect(() => {
+    if (view.phase === "playing") setBoardKey(null);
+  }, [view.phase]);
+
   const hasActions =
     playing &&
     !!opts &&
@@ -604,9 +748,9 @@ export function TableView({ view, onAction, onExit, menu }: TableViewProps): Rea
     <div className="mj">
       <div className="mj-stage">
         <header className="mj-top">
-          {left ? <Opponent p={left} view={view} side="left" isDora={isDora} /> : <span />}
+          {left ? <Opponent p={left} view={view} side="left" isDora={isDora} partner={partners?.[left.id]} /> : <span />}
           <div className="mj-menu">{menu}</div>
-          {right ? <Opponent p={right} view={view} side="right" isDora={isDora} /> : <span />}
+          {right ? <Opponent p={right} view={view} side="right" isDora={isDora} partner={partners?.[right.id]} /> : <span />}
         </header>
 
         {view.log.length > 0 && <p className="lastlog">{view.log[0]}</p>}
@@ -683,6 +827,7 @@ export function TableView({ view, onAction, onExit, menu }: TableViewProps): Rea
 
             <div className="me-status">
               <div className="me-left">
+                <PartnerIcon partner={partners?.[me.id]} size={24} />
                 {me.isDealer && <span className="dealer-badge">親</span>}
                 <RiichiMark p={me} />
                 {playing && (
@@ -746,8 +891,30 @@ export function TableView({ view, onAction, onExit, menu }: TableViewProps): Rea
         )}
       </div>
 
-      {view.phase === "hand_end" && view.result && <ResultPanel view={view} result={view.result} onAction={onAction} />}
-      {view.phase === "game_end" && <FinalPanel view={view} onExit={onExit} />}
+      {cutinResult ? (
+        <YakumanCutin
+          key={rKey}
+          view={view}
+          result={cutinResult}
+          partner={partners?.[cutinResult.winnerId]}
+          onDone={() => setCutinSeen(rKey)}
+        />
+      ) : viewingBoard ? (
+        <button type="button" className="mj-return" onClick={() => setBoardKey(null)}>
+          結果に戻る
+        </button>
+      ) : showResult && result && !onFinalStep ? (
+        <ResultPanel
+          view={view}
+          result={result}
+          onAction={onAction}
+          partners={partners}
+          onFinal={isEnd ? () => setFinalKey(rKey) : undefined}
+          onBoard={() => setBoardKey(modalKey)}
+        />
+      ) : isEnd ? (
+        <FinalPanel view={view} onExit={onExit} onBoard={() => setBoardKey(modalKey)} />
+      ) : null}
     </div>
   );
 }
