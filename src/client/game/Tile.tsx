@@ -131,8 +131,8 @@ const PIN_LAYOUT: Record<number, { r: number; dots: [number, number, PinKey][] }
 
 type SouKey = "g" | "r";
 
-/** 索子（2〜9）：竹1本ずつの中心・高さ・色 */
-const SOU_LAYOUT: Record<number, { w: number; sticks: [number, number, number, SouKey][] }> = {
+/** 索子（2〜9）：竹1本ずつの中心・高さ・色・傾き（度。省略で垂直） */
+const SOU_LAYOUT: Record<number, { w: number; sticks: [number, number, number, SouKey, number?][] }> = {
   2: {
     w: 3.4,
     sticks: [
@@ -167,15 +167,16 @@ const SOU_LAYOUT: Record<number, { w: number; sticks: [number, number, number, S
       [21, 29, 10, "g"],
     ],
   },
+  // 6索：太い竹を縦3本×2段（8索の傾いた形と見分けられるよう、まっすぐ・太め）
   6: {
-    w: 3.4,
+    w: 4.4,
     sticks: [
-      [9, 14, 10, "g"],
-      [15, 14, 10, "g"],
-      [21, 14, 10, "g"],
-      [9, 29, 10, "g"],
-      [15, 29, 10, "g"],
-      [21, 29, 10, "g"],
+      [9, 14.5, 11, "g"],
+      [15, 14.5, 11, "g"],
+      [21, 14.5, 11, "g"],
+      [9, 29.5, 11, "g"],
+      [15, 29.5, 11, "g"],
+      [21, 29.5, 11, "g"],
     ],
   },
   // 7索：上に赤1本、下に緑3本×2段
@@ -191,17 +192,18 @@ const SOU_LAYOUT: Record<number, { w: number; sticks: [number, number, number, S
       [21, 31, 8, "g"],
     ],
   },
+  // 8索：実物と同じく上段は山形（M字）、下段は谷形（W字）に傾ける。6索と形で見分けられる
   8: {
-    w: 3.2,
+    w: 3,
     sticks: [
-      [7.5, 14, 10, "g"],
-      [12.5, 14, 10, "g"],
-      [17.5, 14, 10, "g"],
-      [22.5, 14, 10, "g"],
-      [7.5, 29, 10, "g"],
-      [12.5, 29, 10, "g"],
-      [17.5, 29, 10, "g"],
-      [22.5, 29, 10, "g"],
+      [8, 14.5, 11, "g", 22],
+      [12.6, 14.5, 11, "g", -22],
+      [17.4, 14.5, 11, "g", 22],
+      [22, 14.5, 11, "g", -22],
+      [8, 29.5, 11, "g", -22],
+      [12.6, 29.5, 11, "g", 22],
+      [17.4, 29.5, 11, "g", -22],
+      [22, 29.5, 11, "g", 22],
     ],
   },
   9: {
@@ -306,10 +308,10 @@ function souFace(n: number, tint: string | null): ReactElement {
   const { w, sticks } = SOU_LAYOUT[n];
   return (
     <g>
-      {sticks.map(([x, y, h, k], i) => {
+      {sticks.map(([x, y, h, k, angle], i) => {
         const c = tint ?? SOU_COLOR[k];
         return (
-          <g key={i}>
+          <g key={i} transform={angle ? `rotate(${angle} ${x} ${y})` : undefined}>
             <rect x={x - w / 2} y={y - h / 2} width={w} height={h} rx={w / 2} fill={c} />
             <line x1={x - w / 2} y1={y} x2={x + w / 2} y2={y} stroke={COLOR.face} strokeWidth={0.8} />
           </g>
@@ -332,17 +334,27 @@ function manFace(n: number): ReactElement {
   );
 }
 
+/** どの牌か分からないとき（空白の牌を出さない。空白は白と見間違えるため） */
+function unknownFace(): ReactElement {
+  return (
+    <text x={15} y={26} fontSize={16} textAnchor="middle" fontWeight={700} fill="#9a9a9a">
+      ?
+    </text>
+  );
+}
+
 function honorFace(n: number, pocchi: boolean): ReactElement {
   if (n === 5) {
-    // 白：枠だけ。白ポッチは中央に点（R-30）
+    // 白：青い四角の枠。白ポッチは同じ枠＋中央に大きな金の点（R-30）
     return (
       <g>
-        <rect x={6} y={7} width={18} height={26} rx={2} fill="none" stroke={COLOR.pin} strokeWidth={1.6} />
-        {pocchi && <circle cx={15} cy={20} r={3.2} fill={COLOR.gold} stroke="#7a5a00" strokeWidth={0.6} />}
+        <rect x={6} y={7} width={18} height={26} rx={2} fill="none" stroke={COLOR.pin} strokeWidth={1.8} />
+        {pocchi && <circle cx={15} cy={20} r={4.6} fill={COLOR.gold} stroke="#7a5a00" strokeWidth={0.8} />}
       </g>
     );
   }
   const ch = HONOR_CHAR[String(n)];
+  if (!ch) return unknownFace();
   const color = n === 6 ? COLOR.sou : n === 7 ? COLOR.red : COLOR.man;
   return (
     <text
@@ -429,8 +441,9 @@ export function Tile(props: TileProps): ReactElement {
             {num(COLOR.man)}
           </g>
         );
-      else inner = honorFace(n, !!tile?.pocchi);
-    }
+      else if (s === "z") inner = honorFace(n, !!tile?.pocchi);
+      else inner = unknownFace();
+    } else inner = unknownFace();
   }
 
   const body = (

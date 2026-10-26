@@ -42,7 +42,7 @@
   height: 30px;
 }
 .tile-dim {
-  opacity: 0.38;
+  opacity: 0.55; /* 鳴かれた捨て牌。薄くしすぎると白の枠が消えて見えるため0.55 */
 }
 .tile.last {
   outline: 2px solid #ffd54a;
