@@ -2,13 +2,26 @@
 const base = process.argv[2] ?? "http://127.0.0.1:8787";
 let fails = 0;
 const ok = (cond, msg) => { console.log(`${cond ? "OK " : "NG "} ${msg}`); if (!cond) fails++; };
-async function call(method, path, { token, member, body, raw, type } = {}) {
+const uuid = () => crypto.randomUUID();
+// 役満の写真は本体とサムネイルを1回で送る
+function photoForm(id, sessionId, yakumanId, img) {
+  const f = new FormData();
+  f.set("id", id);
+  f.set("sessionId", sessionId);
+  f.set("yakumanId", yakumanId);
+  f.set("width", "1");
+  f.set("height", "1");
+  f.set("full", new File([img], "full.jpg", { type: "image/jpeg" }));
+  f.set("thumb", new File([img], "thumb.jpg", { type: "image/jpeg" }));
+  return f;
+}
+async function call(method, path, { token, member, body, raw, type, form } = {}) {
   const headers = {};
   if (token) headers.authorization = `Bearer ${token}`;
   if (member) headers["x-member"] = member;
   if (body !== undefined) headers["content-type"] = "application/json";
   if (raw) headers["content-type"] = type;
-  const res = await fetch(base + "/api" + path, { method, headers, body: raw ?? (body !== undefined ? JSON.stringify(body) : undefined) });
+  const res = await fetch(base + "/api" + path, { method, headers, body: form ?? raw ?? (body !== undefined ? JSON.stringify(body) : undefined) });
   const ct = res.headers.get("content-type") ?? "";
   return { status: res.status, data: ct.includes("json") ? await res.json() : await res.arrayBuffer() };
 }
@@ -53,12 +66,6 @@ const rateAll = await call("PATCH", `/g/${gid}/sessions/${sid}`, { token: T, mem
 ok(rateAll.status === 200, "レートを全半荘に適用");
 // 写真（1x1 JPEG）
 const jpg = Buffer.from("/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=", "base64");
-const p = await call("POST", `/g/${gid}/photos?sessionId=${sid}&gameId=${g1.data.id}&w=1&h=1`, { token: T, member: M, raw: jpg, type: "image/jpeg" });
-ok(p.status === 200, "写真アップロード");
-const pf = await fetch(`${base}/api/g/${gid}/photos/${p.data.id}/file?t=${encodeURIComponent(T)}`);
-ok(pf.status === 200 && (await pf.arrayBuffer()).byteLength === jpg.length, "写真の取得");
-ok((await fetch(`${base}/api/g/${gid}/photos/${p.data.id}/file`)).status === 401, "写真はトークンなしで見られない");
-
 st = (await call("GET", `/g/${gid}/state`, { token: T })).data;
 ok(st.games.length === 2 && st.games.every((x) => x.rate === 50), "全半荘のレートが50");
 ok(st.games.find((x) => x.id === g2.data.id).scores.find((x) => x.memberId === B).tie === 1, "同点指定が保存されている");
@@ -85,11 +92,61 @@ ok((await call("POST", `/g/${gid}/chip-events`, { token: T, member: M, body: { s
 ok((await call("POST", `/g/${gid}/chip_events/${ce.data[0].id}/delete`, { token: T, member: M })).status === 200, "バイインを削除");
 const yk = await call("POST", `/g/${gid}/yakuman`, { token: T, member: M, body: { sessionId: sid, gameId: g1.data.id, memberId: B, name: "国士無双" } });
 ok(yk.status === 200, "役満を記録");
-const yp = await call("POST", `/g/${gid}/photos?sessionId=${sid}&yakumanId=${yk.data.id}&w=1&h=1`, { token: T, member: M, raw: jpg, type: "image/jpeg" });
-ok(yp.status === 200 && yp.data.gameId === yk.data.id, "役満の記念写真");
+// 同じ半荘に2件目の役満
+const yk2 = await call("POST", `/g/${gid}/yakuman`, { token: T, member: M, body: { sessionId: sid, gameId: g1.data.id, memberId: A, name: "大三元" } });
+ok(yk2.status === 200, "同じ半荘に2件目の役満");
+ok((await call("POST", `/g/${gid}/yakuman`, { token: T, member: M, body: { sessionId: sid, gameId: g1.data.id, memberId: D } })).status === 400, "卓にいない人の役満は400");
+// 再送しても二重にならない
+const yid = uuid();
+const yr1 = await call("POST", `/g/${gid}/yakuman`, { token: T, member: M, body: { clientId: yid, sessionId: sid, memberId: D, name: "四暗刻" } });
+const yr2 = await call("POST", `/g/${gid}/yakuman`, { token: T, member: M, body: { clientId: yid, sessionId: sid, memberId: D, name: "四暗刻" } });
+ok(yr1.status === 200 && yr2.status === 200 && yr1.data.id === yid && yr2.data.id === yid && yr1.data.gameId === null, "役満の再送は同じ記録を返す（半荘なしでも記録できる）");
+// 次の半荘へ自動で紐づく
+const gid3 = uuid();
+const g3 = await call("POST", `/g/${gid}/games`, { token: T, member: M, body: { clientId: gid3, sessionId: sid, scores: [{ memberId: A, score: 500 }, { memberId: B, score: 300 }, { memberId: D, score: 250 }] } });
+ok(g3.status === 200 && g3.data.id === gid3, "端末のIDで半荘を記録");
+const g3b = await call("POST", `/g/${gid}/games`, { token: T, member: M, body: { clientId: gid3, sessionId: sid, scores: [{ memberId: A, score: 500 }, { memberId: B, score: 300 }, { memberId: D, score: 250 }] } });
+ok(g3b.status === 200 && g3b.data.seq === g3.data.seq, "半荘の再送は同じ半荘を返す");
+const stY = (await call("GET", `/g/${gid}/state`, { token: T })).data;
+ok(stY.games.filter((x) => x.id === gid3).length === 1, "半荘が二重にならない");
+ok(stY.yakuman.find((y) => y.id === yid)?.gameId === gid3, "待っていた役満が次の半荘へ自動で紐づく");
+const unl = await call("PATCH", `/g/${gid}/yakuman/${yid}`, { token: T, member: M, body: { gameId: null } });
+ok(unl.status === 200 && unl.data.gameId === null, "紐づけを外す");
+ok((await call("PATCH", `/g/${gid}/yakuman/${yid}`, { token: T, member: M, body: { gameId: g1.data.id } })).status === 400, "その人がいない半荘へは紐づけられない");
+// 写真
+const photoId = uuid();
+const yp = await call("POST", `/g/${gid}/photos`, { token: T, member: M, form: photoForm(photoId, sid, yk.data.id, jpg) });
+ok(yp.status === 200 && yp.data.yakumanId === yk.data.id && yp.data.gameId === null, "役満の記念写真");
+const ypAgain = await call("POST", `/g/${gid}/photos`, { token: T, member: M, form: photoForm(photoId, sid, yk.data.id, jpg) });
+ok(ypAgain.status === 200, "写真の再送も成功");
+const stP = (await call("GET", `/g/${gid}/state`, { token: T })).data;
+const ph = stP.photos.filter((x) => x.id === photoId);
+ok(ph.length === 1, "写真が二重にならない");
+const thumbRes = await fetch(base + ph[0].thumbUrl);
+ok(thumbRes.status === 200 && (await thumbRes.arrayBuffer()).byteLength === jpg.length, "署名付きURLでサムネイルを取得");
+const fullRes = await fetch(base + ph[0].url);
+ok(fullRes.status === 200, "署名付きURLで本体を取得");
+ok(/public/.test(fullRes.headers.get("cache-control") ?? ""), "画像はキャッシュできる");
+ok((await fetch(base + ph[0].url.replace(/s=[^&]+/, "s=bad"))).status === 403, "署名が違えば403");
+ok((await fetch(base + ph[0].url.replace("/full", "/thumb"))).status === 403, "別の画像に署名は使い回せない");
+ok((await call("POST", `/g/${gid}/photos`, { token: T, member: M, form: photoForm(uuid(), sid, uuid(), jpg) })).status === 404, "役満が届く前の写真は404（送り直す）");
+// トークンのURLは WebSocket 以外で受け付けない
+ok((await fetch(`${base}/api/g/${gid}/state?t=${encodeURIComponent(T)}`)).status === 401, "?t= では読めない");
+// 管理者パスワード（node scripts/smoke.mjs <URL> <管理者パスワード>）
+const adminPw = process.argv[3];
+ok((await call("POST", `/g/${gid}/admin/verify`, { token: T, body: { password: "wrong" } })).status === 403, "違う管理者パスワードは403");
+if (adminPw) ok((await call("POST", `/g/${gid}/admin/verify`, { token: T, body: { password: adminPw } })).status === 200, "管理者パスワードの確認");
+// 半荘を消すと役満コインも減る
+if (M) {
+  const gachaBefore = (await call("GET", `/g/${gid}/gacha`, { token: T, member: B })).data;
+  ok((await call("POST", `/g/${gid}/games/${g1.data.id}/delete`, { token: T, member: M })).status === 200, "半荘1を一時的に削除");
+  const gachaAfter = (await call("GET", `/g/${gid}/gacha`, { token: T, member: B })).data;
+  ok(gachaAfter.earned.yakuman === gachaBefore.earned.yakuman - 1, "削除した半荘の役満はコインに数えない");
+  ok((await call("POST", `/g/${gid}/games/${g1.data.id}/restore`, { token: T, member: M })).status === 200, "半荘1を復元");
+}
 const st3 = (await call("GET", `/g/${gid}/state`, { token: T })).data;
 ok(st3.chipEvents.length === 4 && st3.chipEvents.filter((e) => e.deletedAt).length === 1, "stateにチップ記録");
-ok(st3.yakuman.length === 1 && st3.yakuman[0].name === "国士無双", "stateに役満");
+ok(st3.yakuman.length === 3 && st3.yakuman[0].name === "国士無双", "stateに役満");
 
 // 合言葉なしのグループ：名前だけで作成でき、URLだけで入れる
 const open = await call("POST", "/groups", { body: { members: ["x"] } });
@@ -107,9 +164,12 @@ const bg = await call("PUT", `/g/${open.data.groupId}/background`, { token: OT, 
 ok(bg.status === 200 && bg.data.bg, "背景写真を設定");
 const st2 = (await call("GET", `/g/${open.data.groupId}/state`, { token: OT })).data;
 ok(st2.group.bg === bg.data.bg && st2.group.hasCode === false, "stateに背景と合言葉の有無");
-const bgf = await fetch(`${base}/api/g/${open.data.groupId}/background?t=${encodeURIComponent(OT)}`);
-ok(bgf.status === 200, "背景写真の取得");
+const bgf = await fetch(base + st2.group.bgUrl);
+ok(bgf.status === 200, "署名付きURLで背景写真を取得");
+const bg2 = await call("PUT", `/g/${open.data.groupId}/background`, { token: OT, raw: jpg, type: "image/jpeg" });
+ok(bg2.data.bg !== bg.data.bg, "背景を変えると版が変わる");
+ok((await fetch(base + (await call("GET", `/g/${open.data.groupId}/state`, { token: OT })).data.group.bgUrl)).status === 200, "新しい背景を直後に取得できる");
 ok((await call("DELETE", `/g/${open.data.groupId}/background`, { token: OT })).status === 200, "背景を消す");
 console.log(fails ? `\n${fails}件失敗` : "\nすべて成功");
-console.log("GID", gid, "TOKEN", T, "MEMBER", M, "SID", sid);
+console.log("GID", gid, "MEMBER", M, "SID", sid);
 process.exit(fails ? 1 : 0);

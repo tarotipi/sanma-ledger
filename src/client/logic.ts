@@ -1,5 +1,6 @@
 import { calcBalances, type Balance } from "../shared/mahjong";
 import type { GroupState, Member, Session } from "../shared/types";
+import { fitSize } from "../shared/yakuman";
 import { liveGames } from "./store";
 
 export function sessionOf(state: GroupState, sid: string): Session | undefined {
@@ -41,10 +42,6 @@ export function settledImpact(before: GroupState, after: GroupState, sid: string
     .filter((x) => x.recorded !== x.next);
 }
 
-export function bgUrl(gid: string, token: string, version: string): string {
-  return `/api/g/${gid}/background?t=${encodeURIComponent(token)}&v=${version}`;
-}
-
 export function downloadCsv(filename: string, rows: (string | number)[][]): void {
   const esc = (v: string | number) => {
     const s = String(v);
@@ -61,17 +58,101 @@ export function downloadCsv(filename: string, rows: (string | number)[][]): void
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export async function resizeImage(file: File, maxSide = 1600): Promise<{ blob: Blob; width: number; height: number }> {
-  const bmp = await createImageBitmap(file, { imageOrientation: "from-image" });
-  const scale = Math.min(1, maxSide / Math.max(bmp.width, bmp.height));
-  const width = Math.round(bmp.width * scale);
-  const height = Math.round(bmp.height * scale);
+const PHOTO_SIDE = 1600;
+const THUMB_SIDE = 320;
+
+function toJpeg(canvas: HTMLCanvasElement, quality: number): Promise<Blob> {
+  return new Promise((res, rej) =>
+    canvas.toBlob((b) => (b ? res(b) : rej(new Error("画像を変換できませんでした。端末のメモリが足りない可能性があります。"))), "image/jpeg", quality),
+  );
+}
+
+function drawTo(src: CanvasImageSource, width: number, height: number): HTMLCanvasElement {
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = height;
-  canvas.getContext("2d")!.drawImage(bmp, 0, 0, width, height);
-  const blob = await new Promise<Blob>((res, rej) =>
-    canvas.toBlob((b) => (b ? res(b) : rej(new Error("画像を変換できませんでした。"))), "image/jpeg", 0.8),
-  );
-  return { blob, width, height };
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("画像を変換できませんでした。");
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(src, 0, 0, width, height);
+  return canvas;
+}
+
+// iOS は canvas に使えるメモリが少ないので、使い終わったらすぐ解放する
+function freeCanvas(canvas: HTMLCanvasElement): void {
+  canvas.width = 0;
+  canvas.height = 0;
+}
+
+/** <img> で読む。写真の向き（EXIF）を確実に反映するため */
+async function decodeFile(file: File): Promise<{ img: HTMLImageElement; release: () => void }> {
+  const url = URL.createObjectURL(file);
+  const img = new Image();
+  const release = () => {
+    img.src = "";
+    URL.revokeObjectURL(url);
+  };
+  try {
+    await new Promise<void>((res, rej) => {
+      img.onload = () => res();
+      img.onerror = () => rej(new Error());
+      img.src = url;
+    });
+  } catch {
+    release();
+    throw new Error(`この写真は読み込めませんでした（形式：${file.type || "不明"}）。`);
+  }
+  return { img, release };
+}
+
+// 同時に複数枚を展開するとメモリが足りなくなるので、1枚ずつ処理する
+let imageQueue: Promise<unknown> = Promise.resolve();
+function oneAtATime<T>(fn: () => Promise<T>): Promise<T> {
+  const next = imageQueue.then(fn, fn);
+  imageQueue = next.catch(() => undefined);
+  return next;
+}
+
+/** 役満の写真：本体（長辺1600px）とサムネイル（長辺320px）を作る */
+export function prepareImage(file: File): Promise<{ full: Blob; thumb: Blob; width: number; height: number }> {
+  return oneAtATime(async () => {
+    const { img, release } = await decodeFile(file);
+    try {
+      const { width, height } = fitSize(img.naturalWidth, img.naturalHeight, PHOTO_SIDE);
+      const canvas = drawTo(img, width, height);
+      try {
+        const full = await toJpeg(canvas, 0.8);
+        const t = fitSize(width, height, THUMB_SIDE);
+        // サムネイルは縮小済みの本体から作る（元の写真を2回展開しない）
+        const small = drawTo(canvas, t.width, t.height);
+        try {
+          return { full, thumb: await toJpeg(small, 0.7), width, height };
+        } finally {
+          freeCanvas(small);
+        }
+      } finally {
+        freeCanvas(canvas);
+      }
+    } finally {
+      release();
+    }
+  });
+}
+
+/** 背景の写真：全画面に薄く表示するだけなので、軽くしておく */
+export function prepareBackground(file: File): Promise<Blob> {
+  return oneAtATime(async () => {
+    const { img, release } = await decodeFile(file);
+    try {
+      const { width, height } = fitSize(img.naturalWidth, img.naturalHeight, 1280);
+      const canvas = drawTo(img, width, height);
+      try {
+        return await toJpeg(canvas, 0.7);
+      } finally {
+        freeCanvas(canvas);
+      }
+    } finally {
+      release();
+    }
+  });
 }

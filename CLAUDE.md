@@ -6,7 +6,8 @@
 - 画面：React + TypeScript（Vite）。src/client
 - サーバー：Cloudflare Workers + Hono。worker/index.ts
 - DB：Cloudflare D1（SQLite）。テーブルは worker/schema.ts、初回アクセス時に自動作成
-- 写真：Cloudflare KV（バインディング名 PHOTOS）
+- 写真：Cloudflare R2（バインディング名 IMAGES）。以前の写真は KV（PHOTOS）に残っていて読み取りだけ
+- 管理者パスワード：Cloudflare の秘密情報 ADMIN_PASSWORD。手元では .dev.vars に書く（git に入らない）
 - 計算：src/shared/mahjong.ts（画面とサーバーで共用）。テストは src/shared/__tests__
 - 公開：GitHub の main に push すると Cloudflare Workers Builds が自動でデプロイ
 
@@ -17,8 +18,8 @@
 - 物理削除をしない。deleted_at で論理削除する
 - データを変える API は、必ず変更と audit_logs への記録を同じ db.batch で行う
 - audit_logs を UPDATE / DELETE しない（DBのトリガーでも拒否される）
-- テーブルの列を足すときは worker/schema.ts に ALTER を追記する。既存の CREATE 文は変えない
-- wrangler.jsonc の d1_databases / kv_namespaces の名前を変えない（変えると空のDBが新しく作られる）
+- テーブルの列を足すときは worker/schema.ts の MIGRATIONS の末尾に追記する（BASE_SCHEMA には書かない。毎回全部流れるので重複列エラーで全APIが止まる）。既存の CREATE 文は変えない
+- wrangler.jsonc の d1_databases / kv_namespaces / r2_buckets の名前を変えない（変えると空のDBが新しく作られる）
 - 画面の文言は日本語。型定義必須、any 禁止
 
 ## やらないこと
@@ -49,4 +50,4 @@
 ## コマンド
 - テスト：npm test（計算） / npm run typecheck
 - 手元で動かす：npm run dev（http://localhost:8787）
-- APIの通し確認：npm run dev を起動した状態で node scripts/smoke.mjs
+- APIの通し確認：npm run dev を起動した状態で node scripts/smoke.mjs http://127.0.0.1:8787 <.dev.vars の管理者パスワード>

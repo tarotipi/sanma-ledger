@@ -1,5 +1,6 @@
 // 画面の部品を端末に保存して、2回目以降の起動を速くする。データ（/api）は保存しない。
-const CACHE = "sanma-v2";
+const CACHE = "sanma-v3";
+const MAX_ASSETS = 60; // 古いビルドの部品が溜まり続けないように、新しい順にこの数だけ残す
 const SHELL = ["/", "/manifest.webmanifest", "/icon-192.png"];
 
 self.addEventListener("install", (e) => {
@@ -38,7 +39,11 @@ self.addEventListener("fetch", (e) => {
           fetch(e.request).then((res) => {
             if (res.ok || res.type === "opaque") {
               const copy = res.clone();
-              caches.open(CACHE).then((c) => c.put(e.request, copy));
+              caches.open(CACHE).then(async (c) => {
+                await c.put(e.request, copy);
+                const keys = (await c.keys()).filter((k) => new URL(k.url).pathname.startsWith("/assets/"));
+                await Promise.all(keys.slice(0, Math.max(0, keys.length - MAX_ASSETS)).map((k) => c.delete(k)));
+              });
             }
             return res;
           }),

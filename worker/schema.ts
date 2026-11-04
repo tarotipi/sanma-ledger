@@ -1,5 +1,5 @@
 // テーブルは初回アクセス時に自動で作る（CREATE TABLE IF NOT EXISTS）。
-// 列を足すときは MIGRATIONS の末尾に追記し、SCHEMA_VERSION を上げる。
+// 列を足すときは BASE_SCHEMA に ALTER を書かず、MIGRATIONS の末尾に追記する（BASE_SCHEMA は毎回全部流れるため）。
 
 export const BASE_SCHEMA = [
   `CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
@@ -65,3 +65,31 @@ export const BASE_SCHEMA = [
     group_id TEXT NOT NULL, member_id TEXT NOT NULL, partner_spirit_id TEXT NOT NULL,
     updated_at TEXT NOT NULL, PRIMARY KEY (group_id, member_id))`,
 ];
+
+/** 既存DBへの変更。version は増やす一方で、適用済みは meta の schema_version で飛ばす */
+export const MIGRATIONS: { version: number; sql: string }[] = [
+  { version: 1, sql: `ALTER TABLE photos ADD COLUMN yakuman_id TEXT` },
+  { version: 2, sql: `ALTER TABLE photos ADD COLUMN storage TEXT NOT NULL DEFAULT 'kv'` },
+  // これまで役満の写真は game_id 列に役満IDを入れていた。旧列はそのまま残す
+  { version: 3, sql: `UPDATE photos SET yakuman_id=game_id WHERE yakuman_id IS NULL AND game_id IN (SELECT id FROM yakuman)` },
+  { version: 4, sql: `CREATE INDEX IF NOT EXISTS photos_yakuman ON photos(yakuman_id)` },
+];
+
+/** テーブル作成と移行をまとめて行う。同時に走っても、列の重複だけは適用済みとして扱う */
+export async function ensureSchema(db: D1Database): Promise<void> {
+  await db.batch(BASE_SCHEMA.map((q) => db.prepare(q)));
+  const row = await db.prepare(`SELECT value FROM meta WHERE key='schema_version'`).first<{ value: string }>();
+  const current = Number(row?.value ?? 0);
+  for (const m of MIGRATIONS) {
+    if (m.version <= current) continue;
+    try {
+      await db.prepare(m.sql).run();
+    } catch (e) {
+      if (!/duplicate column name/i.test(String(e))) throw e;
+    }
+    await db
+      .prepare(`INSERT INTO meta(key, value) VALUES ('schema_version', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`)
+      .bind(String(m.version))
+      .run();
+  }
+}

@@ -11,7 +11,6 @@ import { LocalTableScreen } from "./screens/LocalTable";
 import { GachaScreen } from "./screens/Gacha";
 import { ProfileScreen } from "./screens/Profile";
 import { Empty } from "./ui";
-import { bgUrl } from "./logic";
 
 export function App() {
   const { path } = usePath();
@@ -30,7 +29,7 @@ export function App() {
 }
 
 function GroupGate({ route }: { route: Exclude<ReturnType<typeof parseRoute>, { name: "home" }> }) {
-  const { saved, state, loadError, refresh, gid } = useGroup();
+  const { saved, state, loadError, refresh } = useGroup();
   if (!saved) return <Join />;
   if (!state)
     return (
@@ -47,8 +46,8 @@ function GroupGate({ route }: { route: Exclude<ReturnType<typeof parseRoute>, { 
         )}
       </main>
     );
-  const backdrop = state.group.bg ? (
-    <div className="backdrop" style={{ backgroundImage: `url(${bgUrl(gid, saved.token, state.group.bg)})` }} aria-hidden />
+  const backdrop = state.group.bgUrl ? (
+    <div className="backdrop" style={{ backgroundImage: `url(${state.group.bgUrl})` }} aria-hidden />
   ) : null;
   return (
     <>
@@ -60,12 +59,12 @@ function GroupGate({ route }: { route: Exclude<ReturnType<typeof parseRoute>, { 
 }
 
 function AdminBanner() {
-  const { admin, setAdmin } = useGroup();
+  const { admin, setAdminPw } = useGroup();
   if (!admin) return null;
   return (
     <div className="admin-banner" role="status">
       記録係モード：確認なしで訂正できます（記録は管理者のみ閲覧）
-      <button type="button" onClick={() => setAdmin(false)}>
+      <button type="button" onClick={() => setAdminPw(null)}>
         終了
       </button>
     </div>

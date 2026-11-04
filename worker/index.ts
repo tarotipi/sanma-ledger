@@ -1,7 +1,8 @@
 import { Hono, type Context } from "hono";
-import { BASE_SCHEMA } from "./schema";
+import { ensureSchema } from "./schema";
 import { RULES, sumIsZero, validateGame } from "../src/shared/mahjong";
 import type { Score } from "../src/shared/types";
+import { yakumanToLink } from "../src/shared/yakuman";
 import {
   GACHA,
   STARTER_SPIRIT_ID,
@@ -17,7 +18,12 @@ import {
 
 type Env = {
   DB: D1Database;
+  /** 以前の写真の置き場所（読み取りだけ） */
   PHOTOS: KVNamespace;
+  /** 写真と背景の置き場所 */
+  IMAGES: R2Bucket;
+  /** 管理者パスワード（Cloudflare の秘密情報で設定する） */
+  ADMIN_PASSWORD?: string;
   ASSETS: Fetcher;
   /** オンライン卓（Durable Object。1グループ＝1卓） */
   TABLE: DurableObjectNamespace;
@@ -42,7 +48,7 @@ let ready: Promise<string> | null = null;
 function init(env: Env): Promise<string> {
   if (!ready) {
     ready = (async () => {
-      await env.DB.batch(BASE_SCHEMA.map((q) => env.DB.prepare(q)));
+      await ensureSchema(env.DB);
       const secret = toB64(crypto.getRandomValues(new Uint8Array(32)));
       await env.DB.prepare(`INSERT OR IGNORE INTO meta(key, value) VALUES ('secret', ?)`).bind(secret).run();
       const row = await env.DB.prepare(`SELECT value FROM meta WHERE key='secret'`).first<{ value: string }>();
@@ -98,6 +104,22 @@ async function issueToken(secret: string, groupId: string): Promise<string> {
   const device = uid();
   return `${groupId}.${device}.${await hmac(secret, `${groupId}.${device}`)}`;
 }
+
+// 画像のURL。全権限のトークンの代わりに、画像ごとの署名を付ける。
+// 期限を週単位にそろえて、同じ週のあいだURLが変わらない（＝キャッシュが効く）ようにする。
+const IMG_WEEK = 7 * 24 * 60 * 60;
+
+const imgSig = async (secret: string, gid: string, key: string, exp: number) =>
+  (await hmac(secret, `img:${gid}:${key}:${exp}`)).slice(0, 32);
+
+async function imgUrl(secret: string, gid: string, key: string): Promise<string> {
+  const exp = (Math.floor(Date.now() / 1000 / IMG_WEEK) + 2) * IMG_WEEK;
+  return `/api/img/${gid}/${key}?e=${exp}&s=${await imgSig(secret, gid, key, exp)}`;
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** 端末で作ったID。再送しても二重にならないように、これを行のIDに使う */
+const clientIdOf = (v: unknown): string | null => (typeof v === "string" && UUID_RE.test(v) ? v.toLowerCase() : null);
 
 // ---------- 共通 ----------
 
@@ -242,6 +264,7 @@ const mapPhoto = (r: Row) => ({
   id: r.id,
   sessionId: r.session_id,
   gameId: r.game_id,
+  yakumanId: r.yakuman_id,
   width: r.width,
   height: r.height,
   createdAt: r.created_at,
@@ -387,7 +410,9 @@ app.post("/api/groups/:gid/join", async (c) => {
 const requireAuth = async (c: C, next: () => Promise<void>) => {
   const secret = await init(c.env);
   const gid = c.req.param("gid");
-  const auth = c.req.header("authorization")?.replace(/^Bearer /, "") ?? c.req.query("t") ?? "";
+  // ?t= はヘッダーを付けられない WebSocket のときだけ受け付ける（画像は署名付きURLを使う）
+  const wsToken = c.req.header("upgrade")?.toLowerCase() === "websocket" ? c.req.query("t") : undefined;
+  const auth = c.req.header("authorization")?.replace(/^Bearer /, "") ?? wsToken ?? "";
   const [tg, device, sig] = auth.split(".");
   if (!tg || tg !== gid || !device || !sig || !safeEqual(sig, await hmac(secret, `${tg}.${device}`)))
     throw new HttpError(401, "入室し直してください。");
@@ -434,15 +459,30 @@ app.get("/api/g/:gid/state", async (c) => {
   ]);
   const gr = g.results[0];
   if (!gr) throw new HttpError(404, "グループが見つかりません。");
+  const secret = await init(c.env);
+  const signedPhotos = await Promise.all(
+    photos.results.map(async (r) => ({
+      ...mapPhoto(r),
+      thumbUrl: r.deleted_at ? "" : await imgUrl(secret, gid, `p/${String(r.id)}/thumb`),
+      url: r.deleted_at ? "" : await imgUrl(secret, gid, `p/${String(r.id)}/full`),
+    })),
+  );
+  const bg = gr.bg ? String(gr.bg) : null;
   return c.json({
-    group: { id: gr.id, name: gr.name, hasCode: gr.has_code === 1, bg: gr.bg ? String(gr.bg) : null },
+    group: {
+      id: gr.id,
+      name: gr.name,
+      hasCode: gr.has_code === 1,
+      bg,
+      bgUrl: bg ? await imgUrl(secret, gid, `bg/${bg}`) : null,
+    },
     members: members.results.map(mapMember),
     sessions: sessions.results.map(mapSession),
     games: games.results.map(mapGame),
     chips: chips.results.map(mapChip),
     adjustments: adj.results.map(mapAdj),
     settlements: settle.results.map(mapSettle),
-    photos: photos.results.map(mapPhoto),
+    photos: signedPhotos,
     chipEvents: chipEv.results.map(mapChipEvent),
     yakuman: yaku.results.map(mapYakuman),
     version: Number(v.results[0]?.v ?? 0),
@@ -517,7 +557,8 @@ app.patch("/api/g/:gid", async (c) => {
   return c.json({ ok: true });
 });
 
-// 背景写真（グループごとに1枚。画像はKV、版番号は meta テーブル）
+// 背景写真（グループごとに1枚。画像はR2、版番号は meta テーブル）。
+// 版ごとに別のキーへ保存するので、古い画像が新しい版番号で残ることがない
 app.put("/api/g/:gid/background", async (c) => {
   const gid = c.get("actor").groupId;
   const type = c.req.header("content-type") ?? "";
@@ -525,8 +566,8 @@ app.put("/api/g/:gid/background", async (c) => {
   const buf = await c.req.arrayBuffer();
   if (buf.byteLength === 0) throw new HttpError(400, "画像が空です。");
   if (buf.byteLength > 4 * 1024 * 1024) throw new HttpError(413, "画像が大きすぎます（4MBまで）。");
-  const v = uid().slice(0, 8);
-  await c.env.PHOTOS.put(`${gid}/background`, buf, { metadata: { type } });
+  const v = `r2-${uid().slice(0, 8)}`;
+  await c.env.IMAGES.put(`${gid}/bg/${v}`, buf, { httpMetadata: { contentType: type } });
   await c.env.DB.batch([
     c.env.DB.prepare(`INSERT INTO meta(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`).bind(
       `bg:${gid}`,
@@ -544,14 +585,6 @@ app.delete("/api/g/:gid/background", async (c) => {
     audit(c, "group", gid, "update", { background: "(変更前)" }, { background: "(背景写真を消した)" }),
   ]);
   return c.json({ bg: null });
-});
-
-app.get("/api/g/:gid/background", async (c) => {
-  const obj = await c.env.PHOTOS.getWithMetadata<{ type: string }>(`${c.get("actor").groupId}/background`, "arrayBuffer");
-  if (!obj.value) throw new HttpError(404, "背景写真はありません。");
-  return new Response(obj.value, {
-    headers: { "content-type": obj.metadata?.type ?? "image/jpeg", "cache-control": "private, max-age=31536000, immutable" },
-  });
 });
 
 async function getRowGroup(c: C, gid: string): Promise<Row> {
@@ -700,10 +733,16 @@ async function checkScores(c: C, raw: unknown): Promise<Score[]> {
 
 app.post("/api/g/:gid/games", async (c) => {
   const gid = c.get("actor").groupId;
-  const b = await body<{ sessionId: unknown; scores: unknown }>(c);
+  const b = await body<{ sessionId: unknown; scores: unknown; clientId?: unknown }>(c);
   const s = await requireSession(c, b.sessionId);
   const scores = await checkScores(c, b.scores);
-  const id = uid();
+  const clientId = clientIdOf(b.clientId);
+  if (clientId) {
+    // 通信のやり直しなら、すでに作った半荘をそのまま返す
+    const dup = await c.env.DB.prepare(`SELECT * FROM games WHERE id=? AND group_id=?`).bind(clientId, gid).first<Row>();
+    if (dup) return c.json(mapGame(dup));
+  }
+  const id = clientId ?? uid();
   const t = now();
   const seqRow = await c.env.DB.prepare(`SELECT COALESCE(MAX(seq),0)+1 AS n FROM games WHERE session_id=?`)
     .bind(s.id)
@@ -718,12 +757,39 @@ app.post("/api/g/:gid/games", async (c) => {
     updatedAt: t,
     deletedAt: null,
   };
-  await c.env.DB.batch([
-    c.env.DB.prepare(
-      `INSERT INTO games(id,group_id,session_id,seq,rate,scores,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)`,
-    ).bind(id, gid, g.sessionId, g.seq, g.rate, JSON.stringify(scores), t, t),
-    audit(c, "games", id, "insert", null, g),
-  ]);
+  // 「役満！」で先に記録した役満を、その人が卓にいるこの半荘へ紐づける
+  const waiting = await c.env.DB.prepare(
+    `SELECT * FROM yakuman WHERE group_id=? AND session_id=? AND game_id IS NULL AND deleted_at IS NULL ORDER BY created_at`,
+  )
+    .bind(gid, g.sessionId)
+    .all<Row>();
+  const links = yakumanToLink(
+    waiting.results.map((r) => ({ id: String(r.id), memberId: String(r.member_id) })),
+    scores,
+  );
+  const linkStmts = links.flatMap((yid) => {
+    const before = mapYakuman(waiting.results.find((r) => r.id === yid) as Row);
+    return [
+      c.env.DB.prepare(`UPDATE yakuman SET game_id=? WHERE id=?`).bind(id, yid),
+      audit(c, "yakuman", yid, "update", before, { ...before, gameId: id }),
+    ];
+  });
+  try {
+    await c.env.DB.batch([
+      c.env.DB.prepare(
+        `INSERT INTO games(id,group_id,session_id,seq,rate,scores,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)`,
+      ).bind(id, gid, g.sessionId, g.seq, g.rate, JSON.stringify(scores), t, t),
+      audit(c, "games", id, "insert", null, g),
+      ...linkStmts,
+    ]);
+  } catch (e) {
+    // 同じIDの送信が同時に届いたとき
+    if (clientId && /UNIQUE/i.test(String(e))) {
+      const dup = await c.env.DB.prepare(`SELECT * FROM games WHERE id=? AND group_id=?`).bind(clientId, gid).first<Row>();
+      if (dup) return c.json(mapGame(dup));
+    }
+    throw e;
+  }
   return c.json(g);
 });
 
@@ -745,11 +811,21 @@ app.patch("/api/g/:gid/games/:id", async (c) => {
 // 対局に参加しない記録係が、言い間違い・打ち間違いを直すための経路。パスワードで保護する。
 // 訂正の中身は audit_logs に必ず記録する（記録は消さない）。action を admin_* にして、
 // 閲覧は管理者（パスワード保持者）だけに絞る。プレイヤーには見せない。
-const ADMIN_PW = "taro0813";
+function requireAdmin(c: C, password: unknown): void {
+  const expected = c.env.ADMIN_PASSWORD;
+  if (!expected) throw new HttpError(403, "管理者パスワードがサーバーに設定されていません。");
+  if (typeof password !== "string" || !safeEqual(password, expected)) throw new HttpError(403, "管理者パスワードが違います。");
+}
+
+app.post("/api/g/:gid/admin/verify", async (c) => {
+  const b = await body<{ password: unknown }>(c);
+  requireAdmin(c, b.password);
+  return c.json({ ok: true });
+});
 
 app.post("/api/g/:gid/admin/games/:id", async (c) => {
   const b = await body<{ password: unknown; scores?: unknown; action?: unknown }>(c);
-  if (b.password !== ADMIN_PW) throw new HttpError(403, "管理者パスワードが違います。");
+  requireAdmin(c, b.password);
   const row = await getRow(c, "games", c.req.param("id"));
   const before = mapGame(row);
   if (b.action === "delete") {
@@ -780,7 +856,7 @@ app.post("/api/g/:gid/admin/games/:id", async (c) => {
 // 管理者だけが見られる記録係の編集履歴。パスワードが合えば admin_* の記録を返す。
 app.post("/api/g/:gid/admin/logs", async (c) => {
   const b = await body<{ password: unknown; before?: unknown; limit?: unknown }>(c);
-  if (b.password !== ADMIN_PW) throw new HttpError(403, "管理者パスワードが違います。");
+  requireAdmin(c, b.password);
   const gid = c.get("actor").groupId;
   const limit = Math.min(Number(b.limit ?? 50) || 50, 200);
   const before = Number(b.before ?? 0) || Number.MAX_SAFE_INTEGER;
@@ -961,15 +1037,30 @@ app.post("/api/g/:gid/chip-events", async (c) => {
 
 // ---------- 役満 ----------
 
+/** 半荘に紐づけられるか確かめる（同じ対局で、削除されておらず、その人が卓にいること） */
+async function checkYakumanGame(c: C, gameId: string, sessionId: string, memberId: string): Promise<void> {
+  const g = await getRow(c, "games", gameId);
+  if (String(g.session_id) !== sessionId) throw new HttpError(400, "別の対局の半荘には紐づけられません。");
+  if (g.deleted_at) throw new HttpError(400, "削除された半荘には紐づけられません。");
+  if (!j<Score[]>(g.scores).some((x) => x.memberId === memberId)) throw new HttpError(400, "役満を出した人がこの半荘にいません。");
+}
+
 app.post("/api/g/:gid/yakuman", async (c) => {
-  const b = await body<{ sessionId: unknown; gameId?: unknown; memberId: unknown; name?: unknown }>(c);
+  const b = await body<{ sessionId: unknown; gameId?: unknown; memberId: unknown; name?: unknown; clientId?: unknown }>(c);
+  const gid = c.get("actor").groupId;
+  const clientId = clientIdOf(b.clientId);
+  if (clientId) {
+    // 通信のやり直しなら、すでに作った記録をそのまま返す
+    const dup = await c.env.DB.prepare(`SELECT * FROM yakuman WHERE id=? AND group_id=?`).bind(clientId, gid).first<Row>();
+    if (dup) return c.json(mapYakuman(dup));
+  }
   const s = await requireSession(c, b.sessionId);
   const ids = await memberIds(c);
   if (typeof b.memberId !== "string" || !ids.has(b.memberId)) throw new HttpError(400, "役満を出した人を選んでください。");
   const gameId = typeof b.gameId === "string" && b.gameId ? b.gameId : null;
-  if (gameId) await getRow(c, "games", gameId);
+  if (gameId) await checkYakumanGame(c, gameId, String(s.id), b.memberId);
   const y = {
-    id: uid(),
+    id: clientId ?? uid(),
     sessionId: String(s.id),
     gameId,
     memberId: b.memberId,
@@ -977,62 +1068,141 @@ app.post("/api/g/:gid/yakuman", async (c) => {
     createdAt: now(),
     deletedAt: null,
   };
-  await c.env.DB.batch([
-    c.env.DB.prepare(
-      `INSERT INTO yakuman(id,group_id,session_id,game_id,member_id,name,created_at) VALUES (?,?,?,?,?,?,?)`,
-    ).bind(y.id, c.get("actor").groupId, y.sessionId, gameId, y.memberId, y.name, y.createdAt),
-    audit(c, "yakuman", y.id, "insert", null, y),
-  ]);
+  try {
+    await c.env.DB.batch([
+      c.env.DB.prepare(
+        `INSERT INTO yakuman(id,group_id,session_id,game_id,member_id,name,created_at) VALUES (?,?,?,?,?,?,?)`,
+      ).bind(y.id, gid, y.sessionId, gameId, y.memberId, y.name, y.createdAt),
+      audit(c, "yakuman", y.id, "insert", null, y),
+    ]);
+  } catch (e) {
+    if (clientId && /UNIQUE/i.test(String(e))) {
+      const dup = await c.env.DB.prepare(`SELECT * FROM yakuman WHERE id=? AND group_id=?`).bind(clientId, gid).first<Row>();
+      if (dup) return c.json(mapYakuman(dup));
+    }
+    throw e;
+  }
   return c.json(y);
+});
+
+// 紐づける半荘の変更（null で紐づけを外す）
+app.patch("/api/g/:gid/yakuman/:id", async (c) => {
+  const row = await getRow(c, "yakuman", c.req.param("id"));
+  if (row.deleted_at) throw new HttpError(400, "削除された記録は変更できません。先に復元してください。");
+  const b = await body<{ gameId: unknown }>(c);
+  const gameId = typeof b.gameId === "string" && b.gameId ? b.gameId : null;
+  if (gameId) await checkYakumanGame(c, gameId, String(row.session_id), String(row.member_id));
+  const before = mapYakuman(row);
+  const after = { ...before, gameId };
+  await c.env.DB.batch([
+    c.env.DB.prepare(`UPDATE yakuman SET game_id=? WHERE id=?`).bind(gameId, row.id),
+    audit(c, "yakuman", String(row.id), "update", before, after),
+  ]);
+  return c.json(after);
 });
 
 // ---------- 写真 ----------
 
+const MAX_PHOTO = 4 * 1024 * 1024;
+const MAX_THUMB = 1024 * 1024;
+
+function imageFile(v: unknown, label: string, max: number): File {
+  if (!(v instanceof File) || v.size === 0) throw new HttpError(400, `${label}が空です。`);
+  if (!/^image\/(jpeg|png|webp)$/.test(v.type)) throw new HttpError(400, "画像ファイルを選んでください。");
+  if (v.size > max) throw new HttpError(413, "画像が大きすぎます（4MBまで）。");
+  return v;
+}
+
+// 役満の記念写真。本体とサムネイルを1回で受け取る。IDは端末で作り、再送しても二重にならない
 app.post("/api/g/:gid/photos", async (c) => {
-  const s = await requireSession(c, c.req.query("sessionId"));
-  // 役満の記念写真は yakumanId を game_id 列に入れて紐づける
-  const yakumanId = c.req.query("yakumanId") || null;
-  const gameId = yakumanId ?? (c.req.query("gameId") || null);
-  if (yakumanId) await getRow(c, "yakuman", yakumanId);
-  else if (gameId) await getRow(c, "games", gameId);
-  const type = c.req.header("content-type") ?? "";
-  if (!/^image\/(jpeg|png|webp)$/.test(type)) throw new HttpError(400, "画像ファイルを選んでください。");
-  const buf = await c.req.arrayBuffer();
-  if (buf.byteLength > 4 * 1024 * 1024) throw new HttpError(413, "画像が大きすぎます（4MBまで）。");
-  if (buf.byteLength === 0) throw new HttpError(400, "画像が空です。");
-  const width = Number(c.req.query("w") ?? 0) || 0;
-  const height = Number(c.req.query("h") ?? 0) || 0;
+  const gid = c.get("actor").groupId;
+  const form = await c.req.formData();
+  const id = clientIdOf(form.get("id"));
+  if (!id) throw new HttpError(400, "写真のIDがありません。");
+  const dup = await c.env.DB.prepare(`SELECT * FROM photos WHERE id=? AND group_id=?`).bind(id, gid).first<Row>();
+  if (dup) return c.json(mapPhoto(dup));
+  const s = await requireSession(c, form.get("sessionId"));
+  const yakuman = await getRow(c, "yakuman", String(form.get("yakumanId") ?? ""));
+  if (String(yakuman.session_id) !== String(s.id)) throw new HttpError(400, "別の対局の役満には追加できません。");
+  const full = imageFile(form.get("full"), "写真", MAX_PHOTO);
+  const thumb = imageFile(form.get("thumb"), "サムネイル", MAX_THUMB);
   const p = {
-    id: uid(),
+    id,
     sessionId: String(s.id),
-    gameId,
-    width,
-    height,
+    gameId: null,
+    yakumanId: String(yakuman.id),
+    width: Number(form.get("width") ?? 0) || 0,
+    height: Number(form.get("height") ?? 0) || 0,
     createdAt: now(),
     deletedAt: null,
   };
-  const gid = c.get("actor").groupId;
-  await c.env.PHOTOS.put(`${gid}/${p.id}`, buf, { metadata: { type } });
+  await c.env.IMAGES.put(`${gid}/p/${id}/full`, await full.arrayBuffer(), { httpMetadata: { contentType: full.type } });
+  await c.env.IMAGES.put(`${gid}/p/${id}/thumb`, await thumb.arrayBuffer(), { httpMetadata: { contentType: thumb.type } });
   await c.env.DB.batch([
     c.env.DB.prepare(
-      `INSERT INTO photos(id,group_id,session_id,game_id,width,height,created_at) VALUES (?,?,?,?,?,?,?)`,
-    ).bind(p.id, gid, p.sessionId, gameId, width, height, p.createdAt),
+      `INSERT OR IGNORE INTO photos(id,group_id,session_id,game_id,yakuman_id,storage,width,height,created_at) VALUES (?,?,?,NULL,?,'r2',?,?,?)`,
+    ).bind(p.id, gid, p.sessionId, p.yakumanId, p.width, p.height, p.createdAt),
     audit(c, "photos", p.id, "insert", null, p),
   ]);
   return c.json(p);
 });
 
-app.get("/api/g/:gid/photos/:id/file", async (c) => {
-  const gid = c.get("actor").groupId;
-  await getRow(c, "photos", c.req.param("id"));
-  const obj = await c.env.PHOTOS.getWithMetadata<{ type: string }>(`${gid}/${c.req.param("id")}`, "arrayBuffer");
-  if (!obj.value) throw new HttpError(404, "画像が見つかりません。");
-  return new Response(obj.value, {
-    headers: {
-      "content-type": obj.metadata?.type ?? "image/jpeg",
-      "cache-control": "private, max-age=31536000, immutable",
-    },
+// 端末で起きた写真まわりの失敗を、Cloudflare のログに残す（原因を後から調べるため）
+app.post("/api/g/:gid/client-log", async (c) => {
+  const b = await body<{ kind?: unknown; message?: unknown; detail?: unknown }>(c);
+  const cut = (v: unknown) => String(v ?? "").slice(0, 500);
+  console.warn(`[client ${c.get("actor").groupId}] ${cut(b.kind)}: ${cut(b.message)} ${cut(b.detail)} ua=${cut(c.req.header("user-agent"))}`);
+  return c.json({ ok: true });
+});
+
+// ---------- 画像の配信（署名付きURL。CDNにも保存する） ----------
+
+type Loaded = { body: ReadableStream | ArrayBuffer; type: string } | null;
+// Workers の caches.default（型定義は DOM 側が優先されるので明示する）
+const edgeCache = () => (caches as unknown as { default: Cache }).default;
+
+async function serveImage(c: C, gid: string, key: string, load: () => Promise<Loaded>): Promise<Response> {
+  const secret = await init(c.env);
+  const exp = Number(c.req.query("e") ?? 0);
+  const sig = c.req.query("s") ?? "";
+  if (!exp || exp < Date.now() / 1000 || !safeEqual(sig, await imgSig(secret, gid, key, exp))) {
+    throw new HttpError(403, "画像のURLの期限が切れています。");
+  }
+  // 署名を除いたURLで保存し、期限が変わってもCDNの保存分を使えるようにする
+  const cacheKey = new Request(new URL(`/__img/${gid}/${key}`, c.req.url).toString());
+  const hit = await edgeCache().match(cacheKey);
+  if (hit) return hit;
+  const obj = await load();
+  if (!obj) throw new HttpError(404, "画像が見つかりません。");
+  const res = new Response(obj.body, {
+    headers: { "content-type": obj.type, "cache-control": `public, max-age=${2 * IMG_WEEK}, immutable` },
   });
+  c.executionCtx.waitUntil(edgeCache().put(cacheKey, res.clone()));
+  return res;
+}
+
+const fromR2 = async (c: C, key: string): Promise<Loaded> => {
+  const o = await c.env.IMAGES.get(key);
+  return o ? { body: o.body, type: o.httpMetadata?.contentType ?? "image/jpeg" } : null;
+};
+const fromKv = async (c: C, key: string): Promise<Loaded> => {
+  const o = await c.env.PHOTOS.getWithMetadata<{ type: string }>(key, "arrayBuffer");
+  return o.value ? { body: o.value, type: o.metadata?.type ?? "image/jpeg" } : null;
+};
+
+app.get("/api/img/:gid/p/:id/:size{full|thumb}", (c) => {
+  const { gid, id, size } = c.req.param();
+  return serveImage(c, gid, `p/${id}/${size}`, async () => {
+    const row = await c.env.DB.prepare(`SELECT storage FROM photos WHERE id=? AND group_id=?`).bind(id, gid).first<{ storage: string }>();
+    if (!row) return null;
+    // 以前の写真はKVにあり、サムネイルがないので本体を返す
+    return row.storage === "r2" ? fromR2(c, `${gid}/p/${id}/${size}`) : fromKv(c, `${gid}/${id}`);
+  });
+});
+
+app.get("/api/img/:gid/bg/:v", (c) => {
+  const { gid, v } = c.req.param();
+  return serveImage(c, gid, `bg/${v}`, () => (v.startsWith("r2-") ? fromR2(c, `${gid}/bg/${v}`) : fromKv(c, `${gid}/background`)));
 });
 
 // ---------- 削除・復元（論理削除） ----------
@@ -1089,8 +1259,9 @@ async function gachaEarned(c: C, gid: string, memberId: string) {
     if (sc) mine.push(sc.score);
   }
   const y = await c.env.DB.prepare(
-    `SELECT COUNT(*) AS n FROM yakuman y JOIN sessions s ON s.id=y.session_id
-     WHERE y.group_id=? AND y.member_id=? AND y.deleted_at IS NULL AND s.deleted_at IS NULL AND y.created_at>=?`,
+    `SELECT COUNT(*) AS n FROM yakuman y JOIN sessions s ON s.id=y.session_id LEFT JOIN games g ON g.id=y.game_id
+     WHERE y.group_id=? AND y.member_id=? AND y.deleted_at IS NULL AND s.deleted_at IS NULL AND y.created_at>=?
+       AND (y.game_id IS NULL OR g.deleted_at IS NULL)`,
   )
     .bind(gid, memberId, GACHA.START)
     .first<{ n: number }>();

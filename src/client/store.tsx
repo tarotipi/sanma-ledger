@@ -1,8 +1,11 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ApiError, loadGroups, request, saveGroup, type SavedGroup } from "./api";
+import { flushOutbox, listOutbox, subscribeOutbox, type OutboxItem } from "./outbox";
 import type { Game, GroupState, Member, Session } from "../shared/types";
+import { isRetryableStatus } from "../shared/yakuman";
 
-type Api = <T>(method: string, path: string, body?: unknown, extra?: { raw?: Blob; query?: Record<string, string> }) => Promise<T>;
+type Extra = { raw?: Blob; form?: FormData; query?: Record<string, string> };
+type Api = <T>(method: string, path: string, body?: unknown, extra?: Extra) => Promise<T>;
 
 type Ctx = {
   gid: string;
@@ -18,7 +21,12 @@ type Ctx = {
   member: Member | null;
   /** 管理者モード：確認画面を飛ばして、どの半荘でも自由に編集できる（変更は履歴に残る） */
   admin: boolean;
-  setAdmin: (on: boolean) => void;
+  /** サーバーで確かめた管理者パスワード（この画面を開いているあいだだけ持つ）。null で管理者モードを終える */
+  adminPw: string | null;
+  setAdminPw: (pw: string | null) => void;
+  /** 送信待ちの役満と写真 */
+  outbox: OutboxItem[];
+  flush: () => Promise<void>;
 };
 
 const GroupCtx = createContext<Ctx | null>(null);
@@ -65,7 +73,7 @@ export function GroupProvider({ gid, children }: { gid: string; children: ReactN
   }, []);
 
   const api: Api = useCallback(
-    async <T,>(method: string, path: string, body?: unknown, extra?: { raw?: Blob; query?: Record<string, string> }) => {
+    async <T,>(method: string, path: string, body?: unknown, extra?: Extra) => {
       const s = savedRef.current;
       try {
         return await request<T>(method, `/g/${gid}${path}`, {
@@ -73,6 +81,7 @@ export function GroupProvider({ gid, children }: { gid: string; children: ReactN
           memberId: s?.memberId,
           body,
           raw: extra?.raw,
+          form: extra?.form,
           query: extra?.query,
         });
       } catch (e) {
@@ -129,7 +138,64 @@ export function GroupProvider({ gid, children }: { gid: string; children: ReactN
     setState((s) => (s ? fn(s) : s));
   }, []);
 
-  const [admin, setAdmin] = useState(false);
+  const [adminPw, setAdminPw] = useState<string | null>(null);
+  const admin = adminPw !== null;
+
+  // ---- 送信待ちの役満と写真 ----
+  const [outbox, setOutbox] = useState<OutboxItem[]>([]);
+  useEffect(() => {
+    const load = () => void listOutbox(gid).then(setOutbox);
+    load();
+    return subscribeOutbox(load);
+  }, [gid]);
+
+  const flush = useCallback(async () => {
+    if (!savedRef.current) return;
+    const sent = await flushOutbox(gid, {
+      yakuman: async (x) => {
+        await api("POST", "/yakuman", { clientId: x.id, sessionId: x.sessionId, gameId: x.gameId, memberId: x.memberId, name: x.name });
+      },
+      photo: async (x) => {
+        const form = new FormData();
+        form.set("id", x.id);
+        form.set("sessionId", x.sessionId);
+        form.set("yakumanId", x.yakumanId);
+        form.set("width", String(x.width));
+        form.set("height", String(x.height));
+        form.set("full", new File([x.full], "full.jpg", { type: "image/jpeg" }));
+        form.set("thumb", new File([x.thumb], "thumb.jpg", { type: "image/jpeg" }));
+        await api("POST", "/photos", undefined, { form });
+      },
+      retryable: (e) => !(e instanceof ApiError) || isRetryableStatus(e.status),
+      report: (x, e) => {
+        // ログ送信の失敗は無視する（電波がないときは届かない）
+        void api("POST", "/client-log", {
+          kind: `outbox-${x.kind}`,
+          message: e instanceof Error ? e.message : String(e),
+          detail: e instanceof ApiError ? `status=${e.status}` : "",
+        }).catch(() => undefined);
+      },
+    });
+    if (sent) await refresh();
+  }, [gid, api, refresh]);
+
+  // 起動時・電波が戻ったとき・画面に戻ったとき、それと送信待ちがある間は20秒ごとに送る
+  const hasWaiting = outbox.some((x) => !x.dead && !(x.kind === "photo" && x.hold));
+  useEffect(() => {
+    if (!saved) return;
+    void flush();
+    const onWake = () => {
+      if (document.visibilityState === "visible") void flush();
+    };
+    window.addEventListener("online", onWake);
+    document.addEventListener("visibilitychange", onWake);
+    const id = hasWaiting ? window.setInterval(onWake, 20_000) : undefined;
+    return () => {
+      window.removeEventListener("online", onWake);
+      document.removeEventListener("visibilitychange", onWake);
+      window.clearInterval(id);
+    };
+  }, [saved, flush, hasWaiting]);
 
   const member = useMemo(
     () => state?.members.find((m) => m.id === saved?.memberId) ?? null,
@@ -137,8 +203,8 @@ export function GroupProvider({ gid, children }: { gid: string; children: ReactN
   );
 
   const value = useMemo(
-    () => ({ gid, saved, state, loadError, setSaved, refresh, api, patchState, toast, member, admin, setAdmin }),
-    [gid, saved, state, loadError, setSaved, refresh, api, patchState, toast, member, admin],
+    () => ({ gid, saved, state, loadError, setSaved, refresh, api, patchState, toast, member, admin, adminPw, setAdminPw, outbox, flush }),
+    [gid, saved, state, loadError, setSaved, refresh, api, patchState, toast, member, admin, adminPw, outbox, flush],
   );
   return <GroupCtx.Provider value={value}>{children}</GroupCtx.Provider>;
 }

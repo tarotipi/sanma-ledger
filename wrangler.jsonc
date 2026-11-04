@@ -13,6 +13,8 @@
   // ID を書かないと、初回の wrangler deploy で自動作成される（自動プロビジョニング）
   "d1_databases": [{ "binding": "DB", "database_name": "sanma-ledger-db" }],
   "kv_namespaces": [{ "binding": "PHOTOS" }],
+  // 写真と背景の置き場所。以前の写真は PHOTOS（KV）に残っていて、読み取りだけ使う
+  "r2_buckets": [{ "binding": "IMAGES", "bucket_name": "sanma-ledger-images" }],
   // オンライン卓（1グループ＝1卓の Durable Object。SQLite版は無料プランで使える）
   "durable_objects": { "bindings": [{ "name": "TABLE", "class_name": "MahjongTable" }] },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["MahjongTable"] }],

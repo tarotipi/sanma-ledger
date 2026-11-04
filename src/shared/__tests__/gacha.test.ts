@@ -57,6 +57,8 @@ describe("coinsForGame / earnedCoins", () => {
     expect(pullCost("normal", GACHA.MULTI)).toBe(100);
     expect(pullCost("yakuman", GACHA.MULTI)).toBe(10);
     expect(coinBalance({ normal: 30, yakuman: 2 }, { normal: 20, yakuman: 1 })).toEqual({ normal: 10, yakuman: 1 });
+    // 回した後で半荘や役満を消しても、残高はマイナスにならない
+    expect(coinBalance({ normal: 5, yakuman: 0 }, { normal: 20, yakuman: 1 })).toEqual({ normal: 0, yakuman: 0 });
   });
 });
 

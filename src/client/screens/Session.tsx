@@ -1,11 +1,13 @@
 import { useMemo, useState } from "react";
+import { QuickYakuman } from "./QuickYakuman";
+import { OutboxBar, YakumanRow } from "./YakumanParts";
 import { navigate, type SessionTab } from "../router";
 import { liveGames, useGroup } from "../store";
 import { Confirm, Empty, Name, Sheet, Yen, fmtDate, fmtDateTime, type ConfirmSpec } from "../ui";
 import { calcGame, fmtPt, fmtScore } from "../../shared/mahjong";
 import type { Game } from "../../shared/types";
 import { participants, sessionBalances, sessionOf, settledImpact } from "../logic";
-import { DiffTable, GameEditor, SettledWarning, isFreeEdit } from "./GameEditor";
+import { DiffTable, GameEditor, SettledWarning, isFreeEdit, loadEditorDraft } from "./GameEditor";
 import { StatsView } from "./Stats";
 import { SettleView } from "./Settle";
 import { HistoryView } from "./History";
@@ -95,13 +97,20 @@ function Scoreboard({ sid }: { sid: string }) {
 }
 
 function RecordView({ sid }: { sid: string }) {
-  const { state, admin } = useGroup();
-  const [editing, setEditing] = useState<{ open: boolean; game: Game | null }>({ open: false, game: null });
+  const { state, admin, gid } = useGroup();
+  // カメラから戻ったときにアプリが再読み込みされたら、記録の途中から続ける
+  const [editing, setEditing] = useState<{ open: boolean; game: Game | null }>(() => {
+    const d = loadEditorDraft(gid, sid);
+    if (!d?.resume) return { open: false, game: null };
+    return { open: true, game: state?.games.find((g) => g.id === d.gameId) ?? null };
+  });
   const [detail, setDetail] = useState<Game | null>(null);
   if (!state) return null;
   const games = liveGames(state, sid).sort((a, b) => b.seq - a.seq);
   const mm = new Map(state.members.map((m) => [m.id, m]));
   const yakuGames = new Set(state.yakuman.filter((y) => !y.deletedAt && y.gameId).map((y) => y.gameId));
+  // 「役満！」で記録して、まだ半荘に紐づいていないもの
+  const waitingYaku = state.yakuman.filter((y) => y.sessionId === sid && !y.deletedAt && !y.gameId);
 
   return (
     <>
@@ -109,6 +118,15 @@ function RecordView({ sid }: { sid: string }) {
       <button type="button" className="btn primary wide xl" onClick={() => setEditing({ open: true, game: null })}>
         半荘を記録
       </button>
+      <QuickYakuman sid={sid} />
+      <OutboxBar />
+      {waitingYaku.length > 0 && (
+        <section className="yaku-waiting" aria-label="半荘に紐づく前の役満">
+          {waitingYaku.map((y) => (
+            <YakumanRow key={y.id} y={y} />
+          ))}
+        </section>
+      )}
 
       {games.length === 0 ? (
         <Empty>まだ半荘がありません。終わったら「半荘を記録」から素点を入れてください。</Empty>
@@ -163,7 +181,7 @@ function RecordView({ sid }: { sid: string }) {
 }
 
 function GameDetail({ game, onClose, onEdit }: { game: Game | null; onClose: () => void; onEdit: (g: Game) => void }) {
-  const { state, gid, api, refresh, toast, admin } = useGroup();
+  const { state, gid, api, refresh, toast, admin, adminPw } = useGroup();
   const [confirm, setConfirm] = useState<ConfirmSpec | null>(null);
   if (!state) return null;
   const g = game ? state.games.find((x) => x.id === game.id) ?? game : null;
@@ -174,7 +192,7 @@ function GameDetail({ game, onClose, onEdit }: { game: Game | null; onClose: () 
     if (!g) return;
     try {
       // 記録係モードは記録係の訂正として削除（記録は残すが閲覧は管理者限定）
-      if (admin) await api("POST", `/admin/games/${g.id}`, { password: "taro0813", action: "delete" });
+      if (admin) await api("POST", `/admin/games/${g.id}`, { password: adminPw, action: "delete" });
       else await api("POST", `/games/${g.id}/delete`);
       onClose();
       toast(admin ? "削除しました" : `第${g.seq}半荘を削除しました`);
@@ -259,36 +277,7 @@ function GameDetail({ game, onClose, onEdit }: { game: Game | null; onClose: () 
             {!pending &&
               state.yakuman
                 .filter((y) => y.gameId === g.id && !y.deletedAt)
-                .map((y) => (
-                  <div key={y.id} className="yaku-body row-between">
-                    <span>
-                      役満　<b>{mm.get(y.memberId)?.name}</b> {y.name}
-                    </span>
-                    <button
-                      type="button"
-                      className="btn small ghost danger"
-                      onClick={() =>
-                        setConfirm({
-                          title: "役満の記録を削除しますか",
-                          body: <p>削除した記録は履歴から元に戻せます。</p>,
-                          okLabel: "削除する",
-                          danger: true,
-                          onOk: async () => {
-                            try {
-                              await api("POST", `/yakuman/${y.id}/delete`);
-                              toast("役満の記録を削除しました");
-                              await refresh();
-                            } catch (e) {
-                              toast(e instanceof Error ? e.message : "削除できませんでした。");
-                            }
-                          },
-                        })
-                      }
-                    >
-                      削除
-                    </button>
-                  </div>
-                ))}
+                .map((y) => <YakumanRow key={y.id} y={y} />)}
             {!pending && (
               <>
                 <button

@@ -71,6 +71,10 @@ export type Photo = {
   id: string;
   sessionId: string;
   gameId: string | null;
+  yakumanId: string | null;
+  /** 署名付きの画像URL（削除済みは空） */
+  thumbUrl: string;
+  url: string;
   width: number;
   height: number;
   createdAt: string;
@@ -100,7 +104,7 @@ export type Yakuman = {
 };
 
 export type GroupState = {
-  group: { id: string; name: string; hasCode: boolean; bg: string | null };
+  group: { id: string; name: string; hasCode: boolean; bg: string | null; bgUrl: string | null };
   members: Member[];
   sessions: Session[];
   games: Game[];

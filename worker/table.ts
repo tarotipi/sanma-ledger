@@ -6,7 +6,7 @@
 // 不具合を追うとき：ログは全て "[table <gid>]" で始まる。`wrangler tail` で見る。
 
 import { DurableObject } from "cloudflare:workers";
-import { BASE_SCHEMA } from "./schema";
+import { ensureSchema } from "./schema";
 import { RULES } from "../src/shared/mahjong";
 import type { Score } from "../src/shared/types";
 import type { FinalResult, GameAction, PlayerView, SeatIndex } from "../src/shared/game/protocol";
@@ -372,7 +372,7 @@ export class MahjongTable extends DurableObject<TableEnv> {
   private async registerToLedger(gid: string, final: FinalResult, v: PlayerView): Promise<string> {
     const db = this.env.DB;
     // テーブルが無い環境（新規デプロイ直後など）でも動くように、念のため作成（IF NOT EXISTS なので無害）
-    await db.batch(BASE_SCHEMA.map((q) => db.prepare(q)));
+    await ensureSchema(db);
 
     const t = new Date().toISOString();
     const actor = { groupId: gid, device: "online-table", memberId: null, name: "オンライン卓" };

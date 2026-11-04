@@ -4,7 +4,7 @@ import { navigate } from "../router";
 import { gamesInOrder, useGroup } from "../store";
 import { Confirm, Dot, Sheet, Yen, fmtDateTime, type ConfirmSpec } from "../ui";
 import { RULES, calcGame, fmtScore } from "../../shared/mahjong";
-import { downloadCsv, resizeImage, sessionBalances, sessionOf } from "../logic";
+import { downloadCsv, prepareBackground, sessionBalances, sessionOf } from "../logic";
 import type { Member } from "../../shared/types";
 
 const PALETTE = ["#2F7D5B", "#C0392B", "#2E5E9E", "#B7791F", "#7A4FA0", "#1F8A8A", "#A0466B", "#5C6B2E", "#4A4A4A", "#D35400"];
@@ -396,8 +396,7 @@ function GroupSettings() {
             if (!f) return;
             setBusy(true);
             await run(async () => {
-              const { blob } = await resizeImage(f, 1600);
-              await api("PUT", "/background", undefined, { raw: blob });
+              await api("PUT", "/background", undefined, { raw: await prepareBackground(f) });
             }, "背景を変えました");
             setBusy(false);
           }}
@@ -422,25 +421,26 @@ function GroupSettings() {
 }
 
 function AdminSection() {
-  const { admin, setAdmin, toast } = useGroup();
+  const { admin, setAdminPw, api, toast } = useGroup();
   return (
     <div className="admin-box">
       <button
         type="button"
         className={`btn wide ${admin ? "danger" : "ghost"}`}
-        onClick={() => {
+        onClick={async () => {
           if (admin) {
-            setAdmin(false);
+            setAdminPw(null);
             toast("管理者モードを終了しました");
             return;
           }
           const pw = window.prompt("管理者パスワードを入力");
           if (pw == null) return;
-          if (pw === "taro0813") {
-            setAdmin(true);
+          try {
+            await api("POST", "/admin/verify", { password: pw });
+            setAdminPw(pw);
             toast("管理者モードにしました");
-          } else {
-            toast("パスワードが違います。");
+          } catch (e) {
+            toast(e instanceof Error ? e.message : "確認できませんでした。");
           }
         }}
       >
@@ -470,7 +470,7 @@ type AdminLog = {
 };
 
 function AdminLogs() {
-  const { state, api } = useGroup();
+  const { state, api, adminPw } = useGroup();
   const [logs, setLogs] = useState<AdminLog[] | null>(null);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -493,7 +493,7 @@ function AdminLogs() {
   const load = async () => {
     setLoading(true);
     try {
-      const r = await api<{ logs: AdminLog[] }>("POST", "/admin/logs", { password: "taro0813", limit: 100 });
+      const r = await api<{ logs: AdminLog[] }>("POST", "/admin/logs", { password: adminPw, limit: 100 });
       setLogs(r.logs);
       setOpen(true);
     } catch {

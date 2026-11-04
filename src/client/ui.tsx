@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ImgHTMLAttributes, type ReactNode } from "react";
 import { fmtYen } from "../shared/mahjong";
 import type { Member } from "../shared/types";
 
@@ -134,4 +134,48 @@ export function fmtDate(ymd: string): string {
 
 export function pct(v: number): string {
   return `${(v * 100).toFixed(1)}%`;
+}
+
+const RETRY_WAIT_MS = [1000, 3000, 8000];
+
+/** 読み込みに失敗したら間隔を空けて取り直す画像。URLの期限切れに備えて、失敗時に onFail で状態を取り直す */
+export function RetryImg({ src, alt = "", onFail, ...rest }: { src: string; alt?: string; onFail?: () => void } & Omit<ImgHTMLAttributes<HTMLImageElement>, "src" | "alt" | "onError">) {
+  const [attempt, setAttempt] = useState(0);
+  const timer = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    setAttempt(0);
+    return () => window.clearTimeout(timer.current);
+  }, [src]);
+  if (attempt > RETRY_WAIT_MS.length) {
+    return (
+      <span className="img-failed" role="button" tabIndex={0} onClick={(e) => { e.stopPropagation(); setAttempt(0); }}>
+        読み込めません
+        <br />
+        押して再試行
+      </span>
+    );
+  }
+  const url = attempt === 0 ? src : `${src}${src.includes("?") ? "&" : "?"}r=${attempt}`;
+  return (
+    <img
+      {...rest}
+      src={url}
+      alt={alt}
+      onError={() => {
+        if (attempt === 0) onFail?.();
+        timer.current = window.setTimeout(() => setAttempt((n) => n + 1), RETRY_WAIT_MS[attempt] ?? 0);
+      }}
+    />
+  );
+}
+
+/** Blob を画面に出すためのURL。使い終わったら解放する */
+export function BlobImg({ blob, alt = "", ...rest }: { blob: Blob; alt?: string } & Omit<ImgHTMLAttributes<HTMLImageElement>, "src" | "alt">) {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    const u = URL.createObjectURL(blob);
+    setUrl(u);
+    return () => URL.revokeObjectURL(u);
+  }, [blob]);
+  return url ? <img {...rest} src={url} alt={alt} /> : null;
 }

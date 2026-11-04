@@ -133,7 +133,8 @@ export function spentCoins(pulls: { coin: CoinType }[]): CoinBalance {
 }
 
 export function coinBalance(earned: CoinBalance, spent: CoinBalance): CoinBalance {
-  return { normal: earned.normal - spent.normal, yakuman: earned.yakuman - spent.yakuman };
+  // 回した後で半荘や役満を消すと獲得が減るので、残高がマイナスにならないようにする
+  return { normal: Math.max(0, earned.normal - spent.normal), yakuman: Math.max(0, earned.yakuman - spent.yakuman) };
 }
 
 const pick = <T>(list: T[], r: number): T => list[Math.min(list.length - 1, Math.max(0, Math.floor(r * list.length)))];

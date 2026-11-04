@@ -1,14 +1,46 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useGroup, liveGames } from "../store";
 import { Confirm, Dot, Name, Sheet, Yen, type ConfirmSpec } from "../ui";
 import { RULES, calcGame, fmtPt, fmtScore, suggestNext, tieGroups, validateGame } from "../../shared/mahjong";
-import type { Game, GroupState, Score } from "../../shared/types";
+import type { Game, GroupState, Member, Score } from "../../shared/types";
 import { settledImpact } from "../logic";
-
-const YAKU = ["国士無双", "四暗刻", "大三元", "字一色", "緑一色", "清老頭", "小四喜", "大四喜", "四槓子", "九蓮宝燈", "天和", "地和", "数え役満"];
-const ADMIN_PW = "taro0813";
+import { newId } from "../api";
+import { addYakuman, discardHeld, releaseHeld } from "../outbox";
+import { PhotoField, YakuFields, YakuNames, useAddPhoto, usePhotoInputs } from "./YakumanParts";
 
 type Slot = { memberId: string; text: string; neg: boolean; auto: boolean };
+/** 入力中の役満1件。id はそのまま役満の行のIDになる */
+type YakuRow = { id: string; memberId: string; name: string };
+
+/** 入力の途中経過。カメラから戻ったときにアプリが再読み込みされても、続きから入力できるように残す */
+type EditorDraft = {
+  gameId: string | null;
+  clientId: string;
+  slots: Slot[];
+  ties: Record<string, number>;
+  rows: YakuRow[];
+  /** true なら、再読み込み後に記録の画面を開き直す */
+  resume: boolean;
+};
+
+const editorDraftKey = (gid: string, sid: string) => `sanma.editor.${gid}.${sid}`;
+
+export function loadEditorDraft(gid: string, sid: string): EditorDraft | null {
+  try {
+    return JSON.parse(localStorage.getItem(editorDraftKey(gid, sid)) ?? "null") as EditorDraft | null;
+  } catch {
+    return null;
+  }
+}
+
+function saveEditorDraft(gid: string, sid: string, d: EditorDraft | null): void {
+  try {
+    if (d) localStorage.setItem(editorDraftKey(gid, sid), JSON.stringify(d));
+    else localStorage.removeItem(editorDraftKey(gid, sid));
+  } catch {
+    /* 保存できない環境でも動作は続ける */
+  }
+}
 
 function slotScore(s: Slot): number | null {
   if (s.text === "") return null;
@@ -98,18 +130,33 @@ export function GameEditor({
   sessionId: string;
   game: Game | null;
 }) {
-  const { state, api, refresh, patchState, toast, admin } = useGroup();
+  const { state, gid, api, refresh, toast, admin, adminPw, flush } = useGroup();
   const [slots, setSlots] = useState<Slot[]>([]);
   const [ties, setTies] = useState<Record<string, number>>({});
   const [confirm, setConfirm] = useState<ConfirmSpec | null>(null);
   const [hint, setHint] = useState<string | null>(null);
-  const [yaku, setYaku] = useState<{ on: boolean; memberId: string; name: string }>({ on: false, memberId: "", name: "" });
+  const [rows, setRows] = useState<YakuRow[]>([]);
+  const [saving, setSaving] = useState(false);
+  // 同じ入力を送り直しても二重にならないように、開くたびにIDを1つ決めておく
+  const clientId = useRef(newId());
+  const resume = useRef(false);
   const session = state?.sessions.find((s) => s.id === sessionId);
 
   useEffect(() => {
     if (!open || !state) return;
     setHint(null);
-    setYaku({ on: false, memberId: "", name: "" });
+    setSaving(false);
+    const draft = loadEditorDraft(gid, sessionId);
+    if (draft && draft.resume && draft.gameId === (game?.id ?? null)) {
+      clientId.current = draft.clientId;
+      resume.current = false;
+      setSlots(draft.slots);
+      setTies(draft.ties);
+      setRows(draft.rows);
+      return;
+    }
+    clientId.current = newId();
+    setRows([]);
     if (game) {
       setSlots(game.scores.map((s) => ({ memberId: s.memberId, text: String(Math.abs(s.score)), neg: s.score < 0, auto: false })));
       const t: Record<string, number> = {};
@@ -133,6 +180,15 @@ export function GameEditor({
       setTies({});
     }
   }, [open, game?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // カメラを開く前の入力を残す
+  const keepDraft = (nextResume: boolean) => {
+    resume.current = nextResume;
+    saveEditorDraft(gid, sessionId, { gameId: game?.id ?? null, clientId: clientId.current, slots, ties, rows, resume: nextResume });
+  };
+  useEffect(() => {
+    if (open && resume.current) keepDraft(true);
+  }, [open, slots, ties, rows]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const scores: Score[] | null = useMemo(() => {
     if (slots.length !== 3) return null;
@@ -161,7 +217,11 @@ export function GameEditor({
   const toggleMember = (id: string) => {
     setTies({});
     setSlots((cur) => {
-      if (cur.some((s) => s.memberId === id)) return cur.filter((s) => s.memberId !== id);
+      if (cur.some((s) => s.memberId === id)) {
+        // 卓から外した人の役満は残さない（出した人を選び直してもらう）
+        setRows((rs) => rs.map((r) => (r.memberId === id ? { ...r, memberId: "" } : r)));
+        return cur.filter((s) => s.memberId !== id);
+      }
       if (cur.length >= 3) return cur;
       return [...cur, { memberId: id, text: "", neg: false, auto: false }];
     });
@@ -204,24 +264,33 @@ export function GameEditor({
       : { ...state, games: [...state.games, after] };
     const impact = settledImpact(state, nextState, sessionId);
 
-    const pendingYaku = yaku.on && yaku.memberId ? { memberId: yaku.memberId, name: yaku.name.trim() } : null;
+    const pendingRows = rows.filter((r) => r.memberId);
     const run = async () => {
-      patchState(() => nextState);
-      onClose();
+      setSaving(true);
       try {
         const saved =
           game && admin
-            ? await api<Game>("POST", `/admin/games/${game.id}`, { password: ADMIN_PW, scores }) // 記録係の訂正
+            ? await api<Game>("POST", `/admin/games/${game.id}`, { password: adminPw, scores }) // 記録係の訂正
             : game
               ? await api<Game>("PATCH", `/games/${game.id}`, { scores })
-              : await api<Game>("POST", "/games", { sessionId, scores });
-        patchState((s) => ({ ...s, games: s.games.map((g) => (g.id === after.id ? saved : g)) }));
+              : await api<Game>("POST", "/games", { sessionId, scores, clientId: clientId.current });
+        // 役満は送信待ちに入れる。電波が悪くても、届くまで端末に残して送り直す
+        for (const r of pendingRows) {
+          await addYakuman({ id: r.id, gid, sessionId, gameId: saved.id, memberId: r.memberId, name: r.name.trim() });
+        }
+        await releaseHeld(gid, pendingRows.map((r) => r.id));
+        saveEditorDraft(gid, sessionId, null);
+        resume.current = false;
+        setRows([]);
+        onClose();
         toast(game ? (admin ? "訂正しました" : `第${saved.seq}半荘を変更しました`) : `第${saved.seq}半荘を記録しました`);
-        if (pendingYaku && !admin) await api("POST", "/yakuman", { sessionId, gameId: saved.id, ...pendingYaku });
+        await refresh();
+        await flush();
       } catch (e) {
+        // 入力は消さずに画面を開いたままにする。もう一度押しても二重にならない
         toast(e instanceof Error ? e.message : "保存できませんでした。");
       } finally {
-        await refresh();
+        setSaving(false);
       }
     };
 
@@ -257,16 +326,22 @@ export function GameEditor({
     <>
       <Sheet
         open={open}
-        onClose={onClose}
+        onClose={() => {
+          // 取り消されたので、入力中の写真と途中経過を捨てる
+          void discardHeld(gid, rows.map((r) => r.id));
+          saveEditorDraft(gid, sessionId, null);
+          resume.current = false;
+          onClose();
+        }}
         title={game ? `第${game.seq}半荘を編集` : "半荘を記録"}
         footer={
           <button
             type="button"
             className="btn primary wide"
-            disabled={!validation?.ok || (yaku.on && !yaku.memberId)}
+            disabled={!validation?.ok || saving || rows.some((r) => !r.memberId)}
             onClick={() => void save()}
           >
-            {game ? "変更を保存" : "記録する"}
+            {saving ? "保存中…" : game ? "変更を保存" : "記録する"}
           </button>
         }
       >
@@ -383,43 +458,30 @@ export function GameEditor({
               )}
 
               <div className="yaku">
+                {rows.map((r, i) => (
+                  <YakuRowEditor
+                    key={r.id}
+                    row={r}
+                    index={i + 1}
+                    members={slots.map((x) => mm.get(x.memberId))}
+                    sessionId={sessionId}
+                    beforeCamera={() => keepDraft(true)}
+                    onChange={(p) => setRows((rs) => rs.map((x) => (x.id === r.id ? { ...x, ...p } : x)))}
+                    onRemove={() => {
+                      void discardHeld(gid, [r.id]);
+                      setRows((rs) => rs.filter((x) => x.id !== r.id));
+                    }}
+                  />
+                ))}
                 <button
                   type="button"
-                  className={`chip yaku-btn ${yaku.on ? "on" : ""}`}
-                  aria-pressed={yaku.on}
-                  onClick={() => setYaku((y) => ({ ...y, on: !y.on }))}
+                  className={`chip yaku-btn ${rows.length ? "" : "first"}`}
+                  onClick={() => setRows((rs) => [...rs, { id: newId(), memberId: "", name: "" }])}
                 >
-                  役満が出た
+                  {rows.length ? "もう1件追加" : "役満が出た"}
                 </button>
-                {yaku.on && (
-                  <div className="yaku-body">
-                    <div className="chips">
-                      {slots.map((s) => (
-                        <button
-                          key={s.memberId}
-                          type="button"
-                          className={`chip ${yaku.memberId === s.memberId ? "on" : ""}`}
-                          onClick={() => setYaku((y) => ({ ...y, memberId: s.memberId }))}
-                        >
-                          <Dot m={mm.get(s.memberId)} />
-                          {mm.get(s.memberId)?.name}
-                        </button>
-                      ))}
-                    </div>
-                    <input
-                      list="yaku-names"
-                      value={yaku.name}
-                      onChange={(e) => setYaku((y) => ({ ...y, name: e.target.value }))}
-                      placeholder="役の名前（任意）"
-                      maxLength={30}
-                    />
-                    <datalist id="yaku-names">
-                      {YAKU.map((n) => (
-                        <option key={n} value={n} />
-                      ))}
-                    </datalist>
-                  </div>
-                )}
+                {rows.some((r) => !r.memberId) && <p className="note">役満を出した人を選んでください。</p>}
+                <YakuNames />
               </div>
             </>
           )}
@@ -427,5 +489,40 @@ export function GameEditor({
       </Sheet>
       <Confirm spec={confirm} onClose={() => setConfirm(null)} />
     </>
+  );
+}
+
+function YakuRowEditor({
+  row,
+  index,
+  members,
+  sessionId,
+  beforeCamera,
+  onChange,
+  onRemove,
+}: {
+  row: YakuRow;
+  index: number;
+  members: (Member | undefined)[];
+  sessionId: string;
+  beforeCamera: () => void;
+  onChange: (p: Partial<YakuRow>) => void;
+  onRemove: () => void;
+}) {
+  const addPhoto = useAddPhoto();
+  const { inputs, openCamera, openAlbum } = usePhotoInputs(async (f) => {
+    await addPhoto(f, { sessionId, yakumanId: row.id, hold: true });
+  });
+  return (
+    <div className="yaku-body">
+      <div className="row-between">
+        <b>役満 {index}件目</b>
+        <button type="button" className="btn small ghost danger" onClick={onRemove}>
+          やめる
+        </button>
+      </div>
+      <YakuFields members={members} memberId={row.memberId} name={row.name} onChange={onChange} />
+      <PhotoField sessionId={sessionId} yakumanId={row.id} inputs={inputs} beforeCamera={beforeCamera} openCamera={openCamera} openAlbum={openAlbum} />
+    </div>
   );
 }
