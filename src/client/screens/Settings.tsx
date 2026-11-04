@@ -59,7 +59,7 @@ export function SettingsView({ sid }: { sid?: string }) {
           className="btn ghost wide danger"
           onClick={() => {
             forgetGroup(gid);
-            navigate("/");
+            navigate("/", true);
           }}
         >
           この端末からグループを外す

@@ -1,6 +1,7 @@
 export type SavedGroup = { id: string; name: string; token: string; memberId: string | null };
 
 const KEY = "sanma.groups.v1";
+const LAST_KEY = "sanma.lastGroup";
 
 export function loadGroups(): Record<string, SavedGroup> {
   try {
@@ -20,17 +21,41 @@ export function saveGroup(g: SavedGroup): void {
   }
 }
 
+const LEFT_KEY = "sanma.leftGroups.v1";
+
+function leftGroups(): string[] {
+  try {
+    return JSON.parse(localStorage.getItem(LEFT_KEY) ?? "[]") as string[];
+  } catch {
+    return [];
+  }
+}
+
+/** この端末から自分で外したグループか。外したグループには自動で入り直さない */
+export function hasLeftGroup(id: string): boolean {
+  return leftGroups().includes(id);
+}
+
+/** 自分の操作で入り直すときに、外した印を消す */
+export function clearLeftGroup(id: string): void {
+  try {
+    localStorage.setItem(LEFT_KEY, JSON.stringify(leftGroups().filter((x) => x !== id)));
+  } catch {
+    /* 保存できない環境でも動作は続ける */
+  }
+}
+
 export function forgetGroup(id: string): void {
   try {
     const all = loadGroups();
     delete all[id];
     localStorage.setItem(KEY, JSON.stringify(all));
+    localStorage.setItem(LEFT_KEY, JSON.stringify([...leftGroups().filter((x) => x !== id), id]));
+    if (localStorage.getItem(LAST_KEY) === id) localStorage.removeItem(LAST_KEY);
   } catch {
     /* noop */
   }
 }
-
-const LAST_KEY = "sanma.lastGroup";
 
 /** 最後に開いたグループ。以前に追加したアプリが最初の画面から開いたときに使う */
 export function rememberLastGroup(id: string): void {

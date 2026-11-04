@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { lastGroup, loadGroups, request, saveGroup } from "../api";
+import { clearLeftGroup, hasLeftGroup, lastGroup, loadGroups, request, saveGroup } from "../api";
 import { navigate } from "../router";
 import { useGroup, useToast } from "../store";
 import { Dot, Yen, fmtDate, today } from "../ui";
@@ -25,8 +25,10 @@ export function Home() {
 
   const openLink = () => {
     const id = groupIdFromLink(link);
-    if (id) navigate(`/g/${id}`);
-    else toast("グループのリンクを貼り付けてください。");
+    if (id) {
+      clearLeftGroup(id); // リンクを貼ったのは入り直す操作なので、そのまま入れるようにする
+      navigate(`/g/${id}`);
+    } else toast("グループのリンクを貼り付けてください。");
   };
 
   const create = async () => {
@@ -119,6 +121,7 @@ export function Join() {
     setBusy(true);
     try {
       const r = await request<{ token: string; name: string }>("POST", `/groups/${gid}/join`, { body: { code: c } });
+      clearLeftGroup(gid);
       setSaved({ id: gid, name: r.name, token: r.token, memberId: null });
     } catch (err) {
       toast(err instanceof Error ? err.message : "入室できませんでした。");
@@ -131,8 +134,8 @@ export function Join() {
     request<{ name: string; needsCode: boolean }>("GET", `/groups/${gid}/public`)
       .then((r) => {
         setInfo(r);
-        // 合言葉なしのグループは、URLを開いただけで入れる
-        if (!r.needsCode && !tried.current) {
+        // 合言葉なしのグループは、URLを開いただけで入れる（自分で外したグループは除く）
+        if (!r.needsCode && !tried.current && !hasLeftGroup(gid)) {
           tried.current = true;
           void join("");
         }
@@ -145,6 +148,22 @@ export function Join() {
       <main className="page narrow">
         <p className="empty">グループが見つかりません。URLが正しいか確認してください。</p>
         <button type="button" className="btn ghost wide" onClick={() => navigate("/")}>
+          最初の画面へ
+        </button>
+      </main>
+    );
+
+  if (info && !info.needsCode && hasLeftGroup(gid))
+    return (
+      <main className="page narrow">
+        <header className="brand">
+          <h1>{info.name}</h1>
+        </header>
+        <p className="note">この端末からは外してあります。データは残っています。</p>
+        <button type="button" className="btn primary wide xl" disabled={busy} onClick={() => void join("")}>
+          {busy ? "入室中…" : "このグループに入る"}
+        </button>
+        <button type="button" className="btn ghost wide" onClick={() => navigate("/", true)}>
           最初の画面へ
         </button>
       </main>
