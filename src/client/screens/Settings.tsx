@@ -71,7 +71,7 @@ export function SettingsView({ sid }: { sid?: string }) {
 }
 
 function SessionSettings({ sid }: { sid: string }) {
-  const { state, api, refresh, toast } = useGroup();
+  const { state, gid, api, refresh, toast } = useGroup();
   const s = state ? sessionOf(state, sid) : undefined;
   const [title, setTitle] = useState(s?.title ?? "");
   const [date, setDate] = useState(s?.playedOn ?? "");
@@ -202,6 +202,36 @@ function SessionSettings({ sid }: { sid: string }) {
           チップの値段を変更
         </button>
       </div>
+      <button
+        type="button"
+        className="btn ghost wide danger"
+        onClick={() => {
+          const games = state.games.filter((g) => g.sessionId === sid && !g.deletedAt).length;
+          setConfirm({
+            title: "この対局を削除しますか",
+            body: (
+              <>
+                {games > 0 ? <p>半荘{games}件が入っています。削除すると通算成績と精算から外れます。</p> : <p>半荘は入っていません。</p>}
+                <p>削除した対局は変更履歴から元に戻せます。</p>
+              </>
+            ),
+            okLabel: "削除する",
+            danger: true,
+            onOk: async () => {
+              try {
+                await api("POST", `/sessions/${sid}/delete`);
+                toast("対局を削除しました");
+                navigate(`/g/${gid}`, true);
+                await refresh();
+              } catch (e) {
+                toast(e instanceof Error ? e.message : "削除できませんでした。");
+              }
+            },
+          });
+        }}
+      >
+        この対局を削除
+      </button>
       <Confirm spec={confirm} onClose={() => setConfirm(null)} />
     </section>
   );
