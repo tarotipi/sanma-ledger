@@ -1480,4 +1480,14 @@ app.all("/api/*", () => {
   throw new HttpError(404, "見つかりません。");
 });
 
+// グループのページは、最初からそのグループ用のアプリ設定を指定して返す。
+// ホーム画面に追加するとき、スマホが読み込み時の設定を使っても、そのグループから開くように（F-34）
+async function groupPage(c: C): Promise<Response> {
+  const res = await c.env.ASSETS.fetch(new Request(new URL("/", c.req.url).toString()));
+  const html = (await res.text()).replace('href="/manifest.webmanifest"', `href="/api/manifest/${c.req.param("gid")}"`);
+  return new Response(html, { status: res.status, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache" } });
+}
+app.get("/g/:gid{[0-9a-zA-Z-]+}", groupPage);
+app.get("/g/:gid{[0-9a-zA-Z-]+}/*", groupPage);
+
 export default app;

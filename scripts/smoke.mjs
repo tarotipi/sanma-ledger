@@ -168,6 +168,10 @@ ok(mf.status === 200 && mfj.start_url === `/g/${gid}`, "アプリの開始ペー
 ok(!JSON.stringify(mfj).includes(T), "アプリの設定に入室の鍵を含めない");
 ok((await fetch(`${base}/api/manifest/not-found`)).status === 404, "ないグループは404");
 
+const gpage = await (await fetch(`${base}/g/${gid}/settings`)).text();
+ok(gpage.includes(`/api/manifest/${gid}`), "グループのページは最初からそのグループの設定を指す");
+ok((await (await fetch(`${base}/`)).text()).includes("/manifest.webmanifest"), "最初の画面は共通の設定のまま");
+
 // 合言葉なしのグループ：名前だけで作成でき、URLだけで入れる
 const open = await call("POST", "/groups", { body: { members: ["x"] } });
 ok(open.status === 200 && open.data.name === "サンマ帳", "名前だけでグループ作成（グループ名は既定値）");

@@ -74,6 +74,8 @@ export function GroupProvider({ gid, children }: { gid: string; children: ReactN
     const before = link.getAttribute("href") ?? "/manifest.webmanifest";
     link.setAttribute("href", `/api/manifest/${gid}`);
     rememberLastGroup(gid);
+    // 入室情報をブラウザに消されにくくする（対応していない端末では何もしない）
+    void navigator.storage?.persist?.().catch(() => undefined);
     return () => {
       link.setAttribute("href", before);
     };

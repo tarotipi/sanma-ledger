@@ -13,14 +13,18 @@ export function Home() {
   const [members, setMembers] = useState("");
   const [busy, setBusy] = useState(false);
   const [link, setLink] = useState("");
-  const standalone = window.matchMedia("(display-mode: standalone)").matches || (navigator as Navigator & { standalone?: boolean }).standalone === true;
 
-  // ホーム画面のアプリとして開いたら、前回のグループをそのまま開く（最初の画面へ戻るたびには飛ばさない）
+  // 開いたときは前回のグループへそのまま進む（「最初の画面へ」で戻ったときは止まる）
   useEffect(() => {
-    if (!standalone || sessionStorage.getItem("sanma.opened")) return;
-    sessionStorage.setItem("sanma.opened", "1");
+    if (sessionStorage.getItem("sanma.opened")) return;
     const last = lastGroup();
-    if (last && groups.some((g) => g.id === last)) navigate(`/g/${last}`, true);
+    const target = last && groups.some((g) => g.id === last) ? last : groups.length === 1 ? groups[0].id : null;
+    // App が移動の通知を受け取れるようになってから進む（子の effect は親より先に動く）
+    const timer = window.setTimeout(() => {
+      sessionStorage.setItem("sanma.opened", "1");
+      if (target) navigate(`/g/${target}`, true);
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const openLink = () => {
