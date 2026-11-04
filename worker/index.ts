@@ -1187,7 +1187,7 @@ type Loaded = { body: ReadableStream | ArrayBuffer; type: string } | null;
 // Workers の caches.default（型定義は DOM 側が優先されるので明示する）
 const edgeCache = () => (caches as unknown as { default: Cache }).default;
 
-async function serveImage(c: C, gid: string, key: string, load: () => Promise<Loaded>): Promise<Response> {
+async function serveImage(c: C, gid: string, key: string, load: () => Promise<Loaded>, file = ""): Promise<Response> {
   const secret = await init(c.env);
   const exp = Number(c.req.query("e") ?? 0);
   const sig = c.req.query("s") ?? "";
@@ -1195,7 +1195,7 @@ async function serveImage(c: C, gid: string, key: string, load: () => Promise<Lo
     throw new HttpError(403, "画像のURLの期限が切れています。");
   }
   // 署名を除いたURLで保存し、期限が変わってもCDNの保存分を使えるようにする
-  const cacheKey = new Request(new URL(`/__img/${gid}/${key}`, c.req.url).toString());
+  const cacheKey = new Request(new URL(`/__img/${gid}/${key}/${file}`, c.req.url).toString());
   const hit = await edgeCache().match(cacheKey);
   if (hit) return hit;
   const obj = await load();
@@ -1225,6 +1225,22 @@ app.get("/api/img/:gid/p/:id/:size{full|thumb}", (c) => {
     return row.storage === "r2" ? fromR2(c, `${gid}/p/${id}/${size}`) : fromKv(c, `${gid}/${id}`);
   });
 });
+
+// 雀霊の画像。署名は雀霊ごとなので、持っている雀霊のURLしか作れない（G-06）
+app.get("/api/img/:gid/art/:id/:file{(s[0-3]-(card|thumb|face)|item-[1-3])\\.webp}", (c) => {
+  const { gid, id, file } = c.req.param();
+  return serveImage(c, gid, `art/${id}`, () => fromR2(c, `art/${id}/${file}`), file);
+});
+
+/** 雀霊の画像URLのひな形。{file} を s0-card.webp などに置き換えて使う */
+async function artUrls(secret: string, gid: string, spiritIds: Iterable<string>): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
+  for (const id of new Set(spiritIds)) {
+    const url = await imgUrl(secret, gid, `art/${id}`);
+    out[id] = url.replace(`/art/${id}?`, `/art/${id}/{file}?`);
+  }
+  return out;
+}
 
 app.get("/api/img/:gid/bg/:v", (c) => {
   const { gid, v } = c.req.param();
@@ -1306,7 +1322,8 @@ app.get("/api/g/:gid/gacha", async (c) => {
   const me = gachaMember(c);
   const [pulls, earned, partner] = await Promise.all([gachaPulls(c, gid, me), gachaEarned(c, gid, me), gachaPartner(c, gid, me)]);
   const spent = spentCoins(pulls);
-  return c.json({ earned, spent, coins: coinBalance(earned, spent), pulls, partner });
+  const owned = buildCollection(pulls.map((x) => x.result)).spirits;
+  return c.json({ earned, spent, coins: coinBalance(earned, spent), pulls, partner, art: await artUrls(await init(c.env), gid, owned) });
 });
 
 app.post("/api/g/:gid/gacha/pull", async (c) => {
@@ -1345,7 +1362,8 @@ app.post("/api/g/:gid/gacha/pull", async (c) => {
   }
   await c.env.DB.batch(stmts);
   const coins = coinBalance(earned, spentCoins([...pulls, ...results.map((x) => ({ coin: x.coin }))]));
-  return c.json({ results, coins });
+  const nowOwned = buildCollection([...pulls.map((x) => x.result), ...results]).spirits;
+  return c.json({ results, coins, art: await artUrls(await init(c.env), gid, nowOwned) });
 });
 
 app.put("/api/g/:gid/gacha/partner", async (c) => {
@@ -1381,11 +1399,12 @@ app.get("/api/g/:gid/gacha/partners", async (c) => {
     const k = String(p.member_id);
     pullsOf.set(k, [...(pullsOf.get(k) ?? []), j<PullResult>(p.result)]);
   }
-  const out: Record<string, { spiritId: string; stage: number }> = {};
+  const out: Record<string, { spiritId: string; stage: number; art: string }> = {};
+  const urls = await artUrls(await init(c.env), gid, members.results.map((m) => partnerOf.get(String(m.id)) ?? STARTER_SPIRIT_ID));
   for (const m of members.results) {
     const id = String(m.id);
     const spiritId = partnerOf.get(id) ?? STARTER_SPIRIT_ID;
-    out[id] = { spiritId, stage: Math.max(0, buildCollection(pullsOf.get(id) ?? []).stages[spiritId] ?? 0) };
+    out[id] = { spiritId, stage: Math.max(0, buildCollection(pullsOf.get(id) ?? []).stages[spiritId] ?? 0), art: urls[spiritId] };
   }
   return c.json(out);
 });

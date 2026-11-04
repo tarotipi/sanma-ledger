@@ -454,3 +454,42 @@
   font-family: var(--num);
   font-size: 22px;
 }
+
+/* ---- 雀霊の写真 ---- */
+.spirit-photo {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: 10px;
+  object-fit: cover;
+  background: #2a2f2c;
+}
+.spirit-face {
+  display: block;
+  border-radius: 50%;
+  object-fit: cover;
+  background: #2a2f2c;
+}
+.item-photo {
+  display: block;
+  flex: none;
+  border-radius: 6px;
+  object-fit: cover;
+  background: #111;
+}
+.stage-picker {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin: 8px 0;
+}
+.stage-picker button {
+  padding: 2px;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  background: none;
+  cursor: pointer;
+}
+.stage-picker button.on {
+  border-color: var(--gold, #e8b931);
+}

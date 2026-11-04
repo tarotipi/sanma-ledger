@@ -1,7 +1,31 @@
-import { useId } from "react";
-import { SPIRITS, spiritById } from "../../shared/gacha";
+import { useId, useState } from "react";
+import { SPIRITS, spiritById, type ArtKind } from "../../shared/gacha";
 
-type Props = { spiritId: string; stage: number; size: number; silhouette?: boolean };
+type Props = {
+  spiritId: string;
+  stage: number;
+  size: number;
+  silhouette?: boolean;
+  /** サーバーがくれる画像URLのひな形。ないときは下の絵を出す */
+  art?: string | null;
+  /** 全身の立ち絵で出す（size は横幅）。指定がなければ顔の丸い切り抜き */
+  full?: ArtKind;
+};
+
+/** 雀霊の写真。読めないときは絵に戻す */
+export function SpiritArt(props: Props) {
+  const { spiritId, stage, size, silhouette, art, full } = props;
+  const [failed, setFailed] = useState("");
+  const kind: ArtKind = full ?? "face";
+  const url = art && !silhouette ? art.replace("{file}", `s${Math.max(0, Math.min(3, stage))}-${kind}.webp`) : null;
+  if (!url || failed === url) return <SpiritDrawing {...props} />;
+  const name = spiritById(spiritId)?.stages[Math.max(0, Math.min(3, stage))] ?? "雀霊";
+  return full ? (
+    <img className="spirit-photo" src={url} alt={name} width={size} height={Math.round(size * 1.5)} loading="lazy" decoding="async" onError={() => setFailed(url)} />
+  ) : (
+    <img className="spirit-face" src={url} alt={name} width={size} height={size} loading="lazy" decoding="async" onError={() => setFailed(url)} />
+  );
+}
 
 const GOLD = "#E8B931";
 
@@ -21,7 +45,7 @@ function shapeOf(spiritId: string) {
 }
 
 /** 系統色の丸っこいオリジナルの生き物。進化段階で装飾が増える（1=ほっぺと星、2=オーラ、3=王冠） */
-export function SpiritArt({ spiritId, stage, size, silhouette }: Props) {
+function SpiritDrawing({ spiritId, stage, size, silhouette }: Props) {
   const uid = useId().replace(/:/g, "");
   const sp = spiritById(spiritId);
   const sh = shapeOf(spiritId);

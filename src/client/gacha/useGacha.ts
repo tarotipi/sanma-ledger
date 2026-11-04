@@ -8,6 +8,8 @@ export type GachaData = {
   coins: CoinBalance;
   pulls: { id: string; coin: CoinType; result: PullResult; createdAt: string }[];
   partner: string;
+  /** 持っている雀霊の画像URLのひな形（持っていない雀霊の分は来ない） */
+  art: Record<string, string>;
 };
 
 export const NO_MEMBER = "先にグループ画面で自分の名前を選んでください";

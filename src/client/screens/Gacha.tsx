@@ -25,10 +25,11 @@ type Opening = { coin: CoinType; results: PullResult[]; phase: "shake" | "open" 
 
 /** 雀霊カプセル（G-01〜G-09）。点数には影響しないおまけのコレクション */
 export function GachaScreen() {
-  const { gid, toast } = useGroup();
+  const { gid, toast, admin } = useGroup();
   const { query } = usePath();
   const { data, setData, error, call } = useGacha(gid);
-  const [debug, setDebug] = useState(query.get("debug") === "1");
+  // デバッグは全キャラが見えるので、管理者だけが使える
+  const [debug, setDebug] = useState(admin && query.get("debug") === "1");
   const [debugPulls, setDebugPulls] = useState<PullResult[]>([]);
   const [busy, setBusy] = useState(false);
   const [opening, setOpening] = useState<Opening | null>(null);
@@ -38,6 +39,7 @@ export function GachaScreen() {
   const col = useMemo(() => buildCollection(pulls), [pulls]);
   const coins: CoinBalance = debug ? { normal: Infinity, yakuman: Infinity } : (data?.coins ?? { normal: 0, yakuman: 0 });
   const partner = data?.partner;
+  const art = useMemo(() => data?.art ?? {}, [data]);
 
   const pull = async (coin: CoinType, count: number) => {
     if (busy) return;
@@ -55,12 +57,12 @@ export function GachaScreen() {
     } else {
       setBusy(true);
       try {
-        const res = await call<{ results: PullResult[]; coins: CoinBalance }>("POST", "/pull", { coin, count });
+        const res = await call<{ results: PullResult[]; coins: CoinBalance; art: Record<string, string> }>("POST", "/pull", { coin, count });
         results = res.results;
         const t = new Date().toISOString();
         setData((d) =>
           d
-            ? { ...d, coins: res.coins, pulls: [...d.pulls, ...res.results.map((r, i) => ({ id: `new${t}${i}`, coin, result: r, createdAt: t }))] }
+            ? { ...d, coins: res.coins, art: res.art, pulls: [...d.pulls, ...res.results.map((r, i) => ({ id: `new${t}${i}`, coin, result: r, createdAt: t }))] }
             : d,
         );
       } catch (e) {
@@ -110,15 +112,17 @@ export function GachaScreen() {
               <Machine coin="normal" have={coins.normal} busy={busy} onPull={(n) => void pull("normal", n)} />
               <Machine coin="yakuman" have={coins.yakuman} busy={busy} onPull={(n) => void pull("yakuman", n)} />
             </div>
-            <Zukan col={col} reveal={debug} partner={partner} onOpen={setDetail} />
+            <Zukan col={col} reveal={debug} partner={partner} art={art} onOpen={setDetail} />
           </>
         )}
-        <button type="button" className="gacha-debug-toggle" onClick={() => setDebug((d) => !d)}>
-          {debug ? "デバッグを終わる" : "デバッグ"}
-        </button>
+        {admin && (
+          <button type="button" className="gacha-debug-toggle" onClick={() => setDebug((d) => !d)}>
+            {debug ? "デバッグを終わる" : "デバッグ"}
+          </button>
+        )}
       </main>
 
-      {opening && <OpeningView o={opening} col={col} onClose={() => setOpening(null)} onSkip={() => setOpening({ ...opening, phase: "open" })} />}
+      {opening && <OpeningView o={opening} col={col} art={art} onClose={() => setOpening(null)} onSkip={() => setOpening({ ...opening, phase: "open" })} />}
 
       <Sheet open={!!detail} onClose={() => setDetail(null)} title={detail && (debug || col.spirits.includes(detail.id)) ? detail.stages[Math.max(0, col.stages[detail.id] ?? 0)] : "？？？"}>
         {detail && (
@@ -126,6 +130,7 @@ export function GachaScreen() {
             sp={detail}
             col={col}
             reveal={debug}
+            art={art[detail.id]}
             isPartner={partner === detail.id}
             onPartner={() => void setPartner(detail.id)}
           />
@@ -175,7 +180,7 @@ function resultText(r: PullResult, owned: boolean): { title: string; sub: string
   return { title: it?.name ?? "装備", sub: `${sp?.stages[0]}の専属装備` };
 }
 
-function OpeningView({ o, col, onClose, onSkip }: { o: Opening; col: Collection; onClose: () => void; onSkip: () => void }) {
+function OpeningView({ o, col, art, onClose, onSkip }: { o: Opening; col: Collection; art: Record<string, string>; onClose: () => void; onSkip: () => void }) {
   const gold = o.coin === "yakuman";
   return (
     <div className={`gacha-overlay ${gold ? "gold" : ""}`} role="dialog" aria-label="カプセルの結果" onClick={o.phase === "shake" ? onSkip : undefined}>
@@ -197,9 +202,9 @@ function OpeningView({ o, col, onClose, onSkip }: { o: Opening; col: Collection;
               return (
                 <li key={i} className={`gacha-result ${legend ? "legend" : ""} ${r.kind}`} style={{ animationDelay: `${i * 0.08}s` }}>
                   {r.kind === "spirit" ? (
-                    <SpiritArt spiritId={r.spiritId} stage={0} size={o.results.length > 1 ? 56 : 120} />
+                    <SpiritArt spiritId={r.spiritId} stage={0} art={art[r.spiritId]} full={o.results.length > 1 ? "thumb" : "card"} size={o.results.length > 1 ? 72 : 220} />
                   ) : (
-                    <ItemIcon color={spiritById(r.spiritId)?.color ?? "#888"} legend={legend} size={o.results.length > 1 ? 40 : 72} />
+                    <ItemIcon color={spiritById(r.spiritId)?.color ?? "#888"} legend={legend} size={o.results.length > 1 ? 56 : 120} src={col.spirits.includes(r.spiritId) ? itemArt(art[r.spiritId], r.itemId) : null} />
                   )}
                   <strong>{t.title}</strong>
                   <small>{t.sub}</small>
@@ -217,7 +222,15 @@ function OpeningView({ o, col, onClose, onSkip }: { o: Opening; col: Collection;
   );
 }
 
-function ItemIcon({ color, legend, size }: { color: string; legend: boolean; size: number }) {
+/** 装備の画像URL（持ち主の雀霊を持っているときだけ） */
+function itemArt(url: string | undefined, itemId: string | null): string | null {
+  const n = itemId?.split("-").pop();
+  return url && n ? url.replace("{file}", `item-${n}.webp`) : null;
+}
+
+function ItemIcon({ color, legend, size, src }: { color: string; legend: boolean; size: number; src?: string | null }) {
+  const [failed, setFailed] = useState(false);
+  if (src && !failed) return <img className="item-photo" src={src} alt="" width={size} height={size} loading="lazy" decoding="async" onError={() => setFailed(true)} />;
   return (
     <svg width={size} height={size} viewBox="0 0 40 40" aria-hidden>
       <path d="M20 3 L35 12 L35 28 L20 37 L5 28 L5 12 Z" fill={color} stroke={legend ? "#E8B931" : "#fff"} strokeWidth={2.5} />
@@ -226,7 +239,7 @@ function ItemIcon({ color, legend, size }: { color: string; legend: boolean; siz
   );
 }
 
-function Zukan({ col, reveal, partner, onOpen }: { col: Collection; reveal: boolean; partner?: string; onOpen: (s: Spirit) => void }) {
+function Zukan({ col, reveal, partner, art, onOpen }: { col: Collection; reveal: boolean; partner?: string; art: Record<string, string>; onOpen: (s: Spirit) => void }) {
   return (
     <section>
       <h2 className="gacha-h2">
@@ -240,7 +253,7 @@ function Zukan({ col, reveal, partner, onOpen }: { col: Collection; reveal: bool
           return (
             <li key={s.id}>
               <button type="button" className={`zukan-cell ${s.rarity === "legend" ? "legend" : ""} ${owned ? "owned" : ""}`} onClick={() => onOpen(s)}>
-                <SpiritArt spiritId={s.id} stage={owned ? stage : 0} size={64} silhouette={!show} />
+                <SpiritArt spiritId={s.id} stage={owned ? stage : 0} size={72} silhouette={!show} art={art[s.id]} full="thumb" />
                 <span className="zukan-name">{show ? s.stages[owned ? stage : 0] : "？？？"}</span>
                 {owned && <span className="zukan-stage">{stage === 0 ? "基本" : `第${stage}進化`}</span>}
                 {partner === s.id && <span className="zukan-partner">相棒</span>}
@@ -253,16 +266,28 @@ function Zukan({ col, reveal, partner, onOpen }: { col: Collection; reveal: bool
   );
 }
 
-function Detail({ sp, col, reveal, isPartner, onPartner }: { sp: Spirit; col: Collection; reveal: boolean; isPartner: boolean; onPartner: () => void }) {
+function Detail({ sp, col, reveal, art, isPartner, onPartner }: { sp: Spirit; col: Collection; reveal: boolean; art?: string; isPartner: boolean; onPartner: () => void }) {
   const owned = col.spirits.includes(sp.id);
   const show = owned || reveal;
   const stage = Math.max(0, col.stages[sp.id] ?? 0);
   const next = Math.min(GACHA.MAX_STAGE, stage + 1);
+  // 解放した進化段階の中から、見たい姿を選べる
+  const [viewStage, setViewStage] = useState<number | null>(null);
+  const shown = owned ? Math.min(viewStage ?? stage, stage) : 0;
   return (
     <div className="gacha-detail">
       <div className="gacha-detail-art">
-        <SpiritArt spiritId={sp.id} stage={owned ? stage : 0} size={150} silhouette={!show} />
+        <SpiritArt spiritId={sp.id} stage={shown} size={260} silhouette={!show} art={art} full="card" />
       </div>
+      {owned && art && stage > 0 && (
+        <div className="stage-picker">
+          {Array.from({ length: stage + 1 }, (_, i) => (
+            <button key={i} type="button" className={i === shown ? "on" : ""} aria-label={i === 0 ? "基本の姿" : `第${i}進化の姿`} onClick={() => setViewStage(i)}>
+              <SpiritArt spiritId={sp.id} stage={i} size={44} art={art} />
+            </button>
+          ))}
+        </div>
+      )}
       <p className="gacha-tags">
         <span style={{ background: show ? sp.color : "#777" }}>{show ? SYSTEMS[sp.system].name : "？？？"}</span>
         {sp.rarity === "legend" && <span className="gold">伝説</span>}
@@ -284,7 +309,7 @@ function Detail({ sp, col, reveal, isPartner, onPartner }: { sp: Spirit; col: Co
               const n = col.items[id] ?? 0;
               return (
                 <li key={id}>
-                  <ItemIcon color={sp.color} legend={sp.rarity === "legend"} size={22} />
+                  <ItemIcon color={sp.color} legend={sp.rarity === "legend"} size={32} src={owned ? itemArt(art, id) : null} />
                   <span className="grow">{itemById(id)?.name}</span>
                   <strong className={owned && n >= next ? "ok" : ""}>
                     {n}

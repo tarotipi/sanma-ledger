@@ -22,6 +22,8 @@ import "./game.css";
 export interface Partner {
   spiritId: string;
   stage: number;
+  /** 画像URLのひな形 */
+  art?: string;
 }
 
 export interface TableViewProps {
@@ -147,7 +149,7 @@ function PartnerIcon({ partner, size, className }: { partner?: Partner; size: nu
   if (!partner) return null;
   return (
     <span className={`p-spirit${className ? ` ${className}` : ""}`} title="相棒">
-      <SpiritArt spiritId={partner.spiritId} stage={partner.stage} size={size} />
+      <SpiritArt spiritId={partner.spiritId} stage={partner.stage} size={size} art={partner.art} />
     </span>
   );
 }
@@ -568,7 +570,7 @@ function YakumanCutin({
       <div className="yk-content">
         {partner && (
           <div className="yk-spirit">
-            <SpiritArt spiritId={partner.spiritId} stage={partner.stage} size={200} />
+            <SpiritArt spiritId={partner.spiritId} stage={partner.stage} size={200} art={partner.art} full="card" />
           </div>
         )}
         <div className="yk-title">{rankText("yakuman", result.multiplier)}</div>

@@ -36,7 +36,7 @@ export function ProfileScreen() {
           <>
             <section className={`profile-partner stage-${stage} ${sp.rarity === "legend" ? "legend" : ""}`} style={{ borderColor: sp.color }}>
               <small>相棒</small>
-              <SpiritArt spiritId={sp.id} stage={stage} size={180} />
+              <SpiritArt spiritId={sp.id} stage={stage} size={240} art={data.art[sp.id]} full="card" />
               <strong>{sp.stages[stage]}</strong>
               <span>
                 {SYSTEMS[sp.system].name}・{stage === 0 ? "基本" : `第${stage}進化`}
