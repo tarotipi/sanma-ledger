@@ -30,6 +30,25 @@ export function forgetGroup(id: string): void {
   }
 }
 
+const LAST_KEY = "sanma.lastGroup";
+
+/** 最後に開いたグループ。以前に追加したアプリが最初の画面から開いたときに使う */
+export function rememberLastGroup(id: string): void {
+  try {
+    localStorage.setItem(LAST_KEY, id);
+  } catch {
+    /* 保存できない環境でも動作は続ける */
+  }
+}
+
+export function lastGroup(): string | null {
+  try {
+    return localStorage.getItem(LAST_KEY);
+  } catch {
+    return null;
+  }
+}
+
 export class ApiError extends Error {
   constructor(
     public status: number,

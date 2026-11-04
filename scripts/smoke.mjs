@@ -148,6 +148,13 @@ const st3 = (await call("GET", `/g/${gid}/state`, { token: T })).data;
 ok(st3.chipEvents.length === 4 && st3.chipEvents.filter((e) => e.deletedAt).length === 1, "stateにチップ記録");
 ok(st3.yakuman.length === 3 && st3.yakuman[0].name === "国士無双", "stateに役満");
 
+// ホーム画面に追加したアプリの設定
+const mf = await fetch(`${base}/api/manifest/${gid}`);
+const mfj = await mf.json();
+ok(mf.status === 200 && mfj.start_url === `/g/${gid}`, "アプリの開始ページがグループになる");
+ok(!JSON.stringify(mfj).includes(T), "アプリの設定に入室の鍵を含めない");
+ok((await fetch(`${base}/api/manifest/not-found`)).status === 404, "ないグループは404");
+
 // 合言葉なしのグループ：名前だけで作成でき、URLだけで入れる
 const open = await call("POST", "/groups", { body: { members: ["x"] } });
 ok(open.status === 200 && open.data.name === "サンマ帳", "名前だけでグループ作成（グループ名は既定値）");

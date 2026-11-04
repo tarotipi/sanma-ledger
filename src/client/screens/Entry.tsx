@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { loadGroups, request, saveGroup } from "../api";
+import { lastGroup, loadGroups, request, saveGroup } from "../api";
 import { navigate } from "../router";
 import { useGroup, useToast } from "../store";
 import { Dot, Yen, fmtDate, today } from "../ui";
+import { groupIdFromLink } from "../../shared/link";
 import { RULES } from "../../shared/mahjong";
 import { sessionBalances } from "../logic";
 
@@ -11,6 +12,22 @@ export function Home() {
   const toast = useToast();
   const [members, setMembers] = useState("");
   const [busy, setBusy] = useState(false);
+  const [link, setLink] = useState("");
+  const standalone = window.matchMedia("(display-mode: standalone)").matches || (navigator as Navigator & { standalone?: boolean }).standalone === true;
+
+  // ホーム画面のアプリとして開いたら、前回のグループをそのまま開く（最初の画面へ戻るたびには飛ばさない）
+  useEffect(() => {
+    if (!standalone || sessionStorage.getItem("sanma.opened")) return;
+    sessionStorage.setItem("sanma.opened", "1");
+    const last = lastGroup();
+    if (last && groups.some((g) => g.id === last)) navigate(`/g/${last}`, true);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const openLink = () => {
+    const id = groupIdFromLink(link);
+    if (id) navigate(`/g/${id}`);
+    else toast("グループのリンクを貼り付けてください。");
+  };
 
   const create = async () => {
     setBusy(true);
@@ -58,11 +75,27 @@ export function Home() {
         className="form"
         onSubmit={(e) => {
           e.preventDefault();
+          openLink();
+        }}
+      >
+        <label>
+          すでにあるグループに入る
+          <input value={link} onChange={(e) => setLink(e.target.value)} inputMode="url" placeholder="グループのリンクを貼り付け" />
+        </label>
+        <button className="btn wide" disabled={!link.trim()}>
+          このグループを開く
+        </button>
+      </form>
+
+      <form
+        className="form"
+        onSubmit={(e) => {
+          e.preventDefault();
           void create();
         }}
       >
         <label>
-          打つ人の名前（1行に1人）
+          新しいグループを作る：打つ人の名前（1行に1人）
           <textarea value={members} onChange={(e) => setMembers(e.target.value)} rows={4} placeholder={"ドナー\n赤堀\n唐司"} required />
         </label>
         <button className="btn primary wide xl" disabled={busy}>

@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ApiError, loadGroups, request, saveGroup, type SavedGroup } from "./api";
+import { ApiError, loadGroups, rememberLastGroup, request, saveGroup, type SavedGroup } from "./api";
 import { flushOutbox, listOutbox, subscribeOutbox, type OutboxItem } from "./outbox";
 import type { Game, GroupState, Member, Session } from "../shared/types";
 import { isRetryableStatus } from "../shared/yakuman";
@@ -66,6 +66,18 @@ export function GroupProvider({ gid, children }: { gid: string; children: ReactN
   const savedRef = useRef(saved);
   savedRef.current = saved;
   const versionRef = useRef(0);
+
+  // このグループを開いている間は、ホーム画面に追加するとこのグループから開くようにする
+  useEffect(() => {
+    const link = document.querySelector<HTMLLinkElement>('link[rel="manifest"]');
+    if (!link) return;
+    const before = link.getAttribute("href") ?? "/manifest.webmanifest";
+    link.setAttribute("href", `/api/manifest/${gid}`);
+    rememberLastGroup(gid);
+    return () => {
+      link.setAttribute("href", before);
+    };
+  }, [gid]);
 
   const setSaved = useCallback((g: SavedGroup | null) => {
     if (g) saveGroup(g);

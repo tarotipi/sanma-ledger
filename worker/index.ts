@@ -371,6 +371,32 @@ app.post("/api/groups", async (c) => {
   return c.json({ groupId: id, name, token });
 });
 
+// ホーム画面に追加したアプリを、そのグループから開くための設定（入室の情報は含めない）
+app.get("/api/manifest/:gid", async (c) => {
+  const gid = c.req.param("gid");
+  const g = await c.env.DB.prepare(`SELECT id FROM groups WHERE id=?`).bind(gid).first<Row>();
+  if (!g) throw new HttpError(404, "グループが見つかりません。");
+  const manifest = {
+    id: `/g/${gid}`,
+    name: "対戦記録",
+    short_name: "対戦記録",
+    description: "三人麻雀の対戦記録・精算・成績",
+    start_url: `/g/${gid}`,
+    scope: "/",
+    display: "standalone",
+    orientation: "portrait",
+    background_color: "#F2F4F1",
+    theme_color: "#134E3F",
+    lang: "ja",
+    icons: [
+      { src: "/icon-192.png", sizes: "192x192", type: "image/png" },
+      { src: "/icon-512.png", sizes: "512x512", type: "image/png" },
+      { src: "/icon-maskable-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
+    ],
+  };
+  return new Response(JSON.stringify(manifest), { headers: { "content-type": "application/manifest+json; charset=utf-8" } });
+});
+
 app.get("/api/groups/:gid/public", async (c) => {
   const g = await c.env.DB.prepare(`SELECT name, join_hash FROM groups WHERE id=?`).bind(c.req.param("gid")).first<Row>();
   if (!g) throw new HttpError(404, "グループが見つかりません。URLを確認してください。");
