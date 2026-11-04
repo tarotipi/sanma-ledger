@@ -148,6 +148,19 @@ const st3 = (await call("GET", `/g/${gid}/state`, { token: T })).data;
 ok(st3.chipEvents.length === 4 && st3.chipEvents.filter((e) => e.deletedAt).length === 1, "stateにチップ記録");
 ok(st3.yakuman.length === 3 && st3.yakuman[0].name === "国士無双", "stateに役満");
 
+// チョンボ：点数は変わらず、コインが入る
+const chId = uuid();
+const beforeCh = (await call("GET", `/g/${gid}/gacha`, { token: T, member: C })).data;
+const ch1 = await call("POST", `/g/${gid}/chombo`, { token: T, member: M, body: { clientId: chId, sessionId: sid, memberId: C, memo: "誤ロン" } });
+const ch2 = await call("POST", `/g/${gid}/chombo`, { token: T, member: M, body: { clientId: chId, sessionId: sid, memberId: C, memo: "誤ロン" } });
+ok(ch1.status === 200 && ch2.data.id === chId, "チョンボの記録（再送で二重にならない）");
+const afterCh = (await call("GET", `/g/${gid}/gacha`, { token: T, member: C })).data;
+ok(afterCh.coins.chombo === beforeCh.coins.chombo + 1, "チョンボコインが1枚入る");
+const pullCh = await call("POST", `/g/${gid}/gacha/pull`, { token: T, member: C, body: { coin: "chombo", count: 1 } });
+ok(pullCh.status === 200 && pullCh.data.results[0].spiritId === "drake" && pullCh.data.art.drake, "チョンボコインでドレイクを解放");
+ok((await call("POST", `/g/${gid}/gacha/pull`, { token: T, member: C, body: { coin: "chombo", count: 1 } })).status === 400, "コインがなければ回せない");
+ok((await call("POST", `/g/${gid}/chombo/${chId}/delete`, { token: T, member: M })).status === 200, "チョンボの記録を削除");
+
 // ホーム画面に追加したアプリの設定
 const mf = await fetch(`${base}/api/manifest/${gid}`);
 const mfj = await mf.json();

@@ -17,12 +17,12 @@ import {
 } from "../gacha";
 
 describe("データ", () => {
-  it("20体・60装備・IDが一意", () => {
-    expect(SPIRITS).toHaveLength(20);
-    expect(ALL_ITEMS).toHaveLength(60);
-    expect(new Set(SPIRITS.map((s) => s.id)).size).toBe(20);
-    expect(new Set(ALL_ITEMS.map((i) => i.id)).size).toBe(60);
-    expect(new Set([...SPIRITS.map((s) => s.id), ...ALL_ITEMS.map((i) => i.id)]).size).toBe(80);
+  it("21体（通常20＋チョンボ専用1）・63装備・IDが一意", () => {
+    expect(SPIRITS).toHaveLength(21);
+    expect(ALL_ITEMS).toHaveLength(63);
+    expect(new Set(SPIRITS.map((s) => s.id)).size).toBe(21);
+    expect(new Set(ALL_ITEMS.map((i) => i.id)).size).toBe(63);
+    expect(new Set([...SPIRITS.map((s) => s.id), ...ALL_ITEMS.map((i) => i.id)]).size).toBe(84);
   });
   it("各雀霊は4段階の名前と専属装備3つ。伝説は各系統1体", () => {
     for (const s of SPIRITS) {
@@ -49,16 +49,16 @@ describe("coinsForGame / earnedCoins", () => {
   });
   it("初期配布を足す", () => {
     expect(earnedCoins([], 0)).toEqual(GACHA.INITIAL);
-    expect(earnedCoins([520, 0], 3)).toEqual({ normal: GACHA.INITIAL.normal + 6, yakuman: GACHA.INITIAL.yakuman + 3 });
+    expect(earnedCoins([520, 0], 3, 2)).toEqual({ normal: GACHA.INITIAL.normal + 6, yakuman: GACHA.INITIAL.yakuman + 3, chombo: 2 });
   });
   it("消費と残高", () => {
     const pulls = [{ coin: "normal" as const }, { coin: "normal" as const }, { coin: "yakuman" as const }];
-    expect(spentCoins(pulls)).toEqual({ normal: 20, yakuman: 1 });
+    expect(spentCoins(pulls)).toEqual({ normal: 20, yakuman: 1, chombo: 0 });
     expect(pullCost("normal", GACHA.MULTI)).toBe(100);
     expect(pullCost("yakuman", GACHA.MULTI)).toBe(10);
-    expect(coinBalance({ normal: 30, yakuman: 2 }, { normal: 20, yakuman: 1 })).toEqual({ normal: 10, yakuman: 1 });
+    expect(coinBalance({ normal: 30, yakuman: 2, chombo: 1 }, { normal: 20, yakuman: 1, chombo: 0 })).toEqual({ normal: 10, yakuman: 1, chombo: 1 });
     // 回した後で半荘や役満を消しても、残高はマイナスにならない
-    expect(coinBalance({ normal: 5, yakuman: 0 }, { normal: 20, yakuman: 1 })).toEqual({ normal: 0, yakuman: 0 });
+    expect(coinBalance({ normal: 5, yakuman: 0, chombo: 0 }, { normal: 20, yakuman: 1, chombo: 2 })).toEqual({ normal: 0, yakuman: 0, chombo: 0 });
   });
 });
 
@@ -122,5 +122,27 @@ describe("buildCollection（進化段階）", () => {
     expect(c.items["raitei-1"]).toBe(1);
     const got = buildCollection([{ coin: "yakuman", kind: "spirit", spiritId: "raitei", itemId: null, converted: false }, item("raitei-1"), item("raitei-2"), item("raitei-3")]);
     expect(got.stages.raitei).toBe(1);
+  });
+});
+
+describe("チョンボコイン", () => {
+  it("最初の1枚でドレイクを解放する", () => {
+    expect(rollPull("chombo", 0.5, 0.5, 0.5, [STARTER_SPIRIT_ID])).toMatchObject({ kind: "spirit", spiritId: "drake" });
+  });
+  it("解放後は一番少ない専属装備を増やし、3枚で1段階進化する", () => {
+    const owned = [STARTER_SPIRIT_ID, "drake"];
+    const pulls: PullResult[] = [rollPull("chombo", 0, 0, 0, [STARTER_SPIRIT_ID])];
+    for (let i = 0; i < 3; i++) pulls.push(rollPull("chombo", 0, 0, 0, owned, buildCollection(pulls).items));
+    expect(new Set(pulls.slice(1).map((p) => p.itemId)).size).toBe(3);
+    expect(buildCollection(pulls).stages.drake).toBe(1);
+  });
+  it("通常と役満のカプセルからドレイクは出ない", () => {
+    for (let i = 0; i < 40; i++) {
+      const r = i / 40;
+      expect(rollPull("normal", 0, r, r, []).spiritId).not.toBe("drake");
+      expect(rollPull("normal", 0.9, r, r, []).spiritId).not.toBe("drake");
+      expect(rollPull("yakuman", 0, r, r, []).spiritId).not.toBe("drake");
+      expect(rollPull("yakuman", 0.9, r, r, []).spiritId).not.toBe("drake");
+    }
   });
 });

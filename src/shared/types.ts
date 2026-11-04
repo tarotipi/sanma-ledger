@@ -103,6 +103,16 @@ export type Yakuman = {
   deletedAt: string | null;
 };
 
+/** チョンボの記録。点数と精算には影響しない */
+export type Chombo = {
+  id: string;
+  sessionId: string;
+  memberId: string;
+  memo: string;
+  createdAt: string;
+  deletedAt: string | null;
+};
+
 export type GroupState = {
   group: { id: string; name: string; hasCode: boolean; bg: string | null; bgUrl: string | null };
   members: Member[];
@@ -114,6 +124,7 @@ export type GroupState = {
   photos: Photo[];
   chipEvents: ChipEvent[];
   yakuman: Yakuman[];
+  chombo: Chombo[];
   version: number;
 };
 
@@ -127,7 +138,8 @@ export type LogEntity =
   | "settlements"
   | "photos"
   | "chip_events"
-  | "yakuman";
+  | "yakuman"
+  | "chombo";
 
 // admin_* は記録係による訂正。記録は必ず残すが、閲覧は管理者（パスワード保持者）に限定する。
 export type LogAction = "insert" | "update" | "delete" | "restore" | "admin_update" | "admin_delete" | "admin_restore";

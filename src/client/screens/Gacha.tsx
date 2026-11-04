@@ -37,7 +37,7 @@ export function GachaScreen() {
 
   const pulls = useMemo(() => (debug ? debugPulls : (data?.pulls.map((p) => p.result) ?? [])), [debug, debugPulls, data]);
   const col = useMemo(() => buildCollection(pulls), [pulls]);
-  const coins: CoinBalance = debug ? { normal: Infinity, yakuman: Infinity } : (data?.coins ?? { normal: 0, yakuman: 0 });
+  const coins: CoinBalance = debug ? { normal: Infinity, yakuman: Infinity, chombo: Infinity } : (data?.coins ?? { normal: 0, yakuman: 0, chombo: 0 });
   const partner = data?.partner;
   const art = useMemo(() => data?.art ?? {}, [data]);
 
@@ -49,7 +49,7 @@ export function GachaScreen() {
       const owned = [...col.spirits];
       results = [];
       for (let i = 0; i < count; i++) {
-        const r = rollPull(coin, Math.random(), Math.random(), Math.random(), owned);
+        const r = rollPull(coin, Math.random(), Math.random(), Math.random(), owned, col.items);
         if (r.kind === "spirit") owned.push(r.spiritId);
         results.push(r);
       }
@@ -107,10 +107,11 @@ export function GachaScreen() {
           <div className="loading" aria-label="読み込み中" />
         ) : (
           <>
-            <p className="note">半荘ごとに素点1万点につき雀霊コイン1枚（最低1枚）、役満1回で役満コイン1枚。点数・精算には影響しません。</p>
+            <p className="note">半荘ごとに素点1万点につき雀霊コイン1枚（最低1枚）、役満1回で役満コイン1枚、チョンボ1回でチョンボコイン1枚。点数・精算には影響しません。</p>
             <div className="gacha-machines">
               <Machine coin="normal" have={coins.normal} busy={busy} onPull={(n) => void pull("normal", n)} />
               <Machine coin="yakuman" have={coins.yakuman} busy={busy} onPull={(n) => void pull("yakuman", n)} />
+              <Machine coin="chombo" have={coins.chombo} busy={busy} onPull={(n) => void pull("chombo", n)} />
             </div>
             <Zukan col={col} reveal={debug} partner={partner} art={art} onOpen={setDetail} />
           </>
@@ -142,22 +143,23 @@ export function GachaScreen() {
 
 function Machine({ coin, have, busy, onPull }: { coin: CoinType; have: number; busy: boolean; onPull: (n: number) => void }) {
   const gold = coin === "yakuman";
-  const label = gold ? "役満コイン" : "雀霊コイン";
+  const chombo = coin === "chombo";
+  const label = gold ? "役満コイン" : chombo ? "チョンボコイン" : "雀霊コイン";
   const reason = (n: number) => (have >= pullCost(coin, n) ? null : `${label}があと${pullCost(coin, n) - have}枚必要`);
   return (
-    <section className={`gacha-machine ${gold ? "gold" : ""}`}>
+    <section className={`gacha-machine ${gold ? "gold" : ""} ${chombo ? "chombo" : ""}`}>
       <div className="gacha-coin">
         <span className="gacha-coin-icon" aria-hidden>
-          {gold ? "役" : "雀"}
+          {gold ? "役" : chombo ? "チ" : "雀"}
         </span>
         <span>
           {label}
           <strong>{Number.isFinite(have) ? have : "∞"}</strong>枚
         </span>
       </div>
-      <p className="gacha-rate">{gold ? "伝説の雀霊 1/2・伝説の装備 1/2" : "雀霊 1/5・装備 4/5"}</p>
+      <p className="gacha-rate">{gold ? "伝説の雀霊 1/2・伝説の装備 1/2" : chombo ? "1枚目で専用の雀霊を解放。その後は3枚で1段階進化" : "雀霊 1/5・装備 4/5"}</p>
       <div className="gacha-btns">
-        {[1, GACHA.MULTI].map((n) => (
+        {(chombo ? [1] : [1, GACHA.MULTI]).map((n) => (
           <div key={n}>
             <button type="button" className={`btn wide ${gold ? "gold-btn" : "primary"}`} disabled={busy || !!reason(n)} onClick={() => onPull(n)}>
               {n === 1 ? "1回" : "10連"}（{pullCost(coin, n)}枚）

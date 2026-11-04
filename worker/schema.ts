@@ -73,6 +73,13 @@ export const MIGRATIONS: { version: number; sql: string }[] = [
   // これまで役満の写真は game_id 列に役満IDを入れていた。旧列はそのまま残す
   { version: 3, sql: `UPDATE photos SET yakuman_id=game_id WHERE yakuman_id IS NULL AND game_id IN (SELECT id FROM yakuman)` },
   { version: 4, sql: `CREATE INDEX IF NOT EXISTS photos_yakuman ON photos(yakuman_id)` },
+  {
+    version: 5,
+    sql: `CREATE TABLE IF NOT EXISTS chombo (
+    id TEXT PRIMARY KEY, group_id TEXT NOT NULL, session_id TEXT NOT NULL, member_id TEXT NOT NULL,
+    memo TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, deleted_at TEXT)`,
+  },
+  { version: 6, sql: `CREATE INDEX IF NOT EXISTS chombo_group ON chombo(group_id)` },
 ];
 
 /** テーブル作成と移行をまとめて行う。同時に走っても、列の重複だけは適用済みとして扱う */

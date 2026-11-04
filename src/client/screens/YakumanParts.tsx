@@ -22,11 +22,18 @@ export function YakuFields({
   members,
   memberId,
   name,
+  placeholder = "役の名前（任意）",
+  list = true,
+  maxLength = 30,
   onChange,
 }: {
   members: (Member | undefined)[];
   memberId: string;
   name: string;
+  placeholder?: string;
+  /** 役の名前の候補を出すか */
+  list?: boolean;
+  maxLength?: number;
   onChange: (patch: { memberId?: string; name?: string }) => void;
 }) {
   return (
@@ -48,7 +55,7 @@ export function YakuFields({
             ),
         )}
       </div>
-      <input list="yaku-names" value={name} onChange={(e) => onChange({ name: e.target.value })} placeholder="役の名前（任意）" maxLength={30} />
+      <input list={list ? "yaku-names" : undefined} value={name} onChange={(e) => onChange({ name: e.target.value })} placeholder={placeholder} maxLength={maxLength} />
     </>
   );
 }

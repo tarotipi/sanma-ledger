@@ -290,7 +290,17 @@ const mapYakuman = (r: Row) => ({
   deletedAt: r.deleted_at,
 });
 
+const mapChombo = (r: Row) => ({
+  id: r.id,
+  sessionId: r.session_id,
+  memberId: r.member_id,
+  memo: r.memo,
+  createdAt: r.created_at,
+  deletedAt: r.deleted_at,
+});
+
 const TABLES = {
+  chombo: mapChombo,
   chip_events: mapChipEvent,
   yakuman: mapYakuman,
   sessions: mapSession,
@@ -467,7 +477,7 @@ app.get("/api/g/:gid/version", async (c) => c.json({ version: await version(c) }
 app.get("/api/g/:gid/state", async (c) => {
   const gid = c.get("actor").groupId;
   const q = (sql: string) => c.env.DB.prepare(sql).bind(gid);
-  const [g, members, sessions, games, chips, adj, settle, photos, v, chipEv, yaku] = await c.env.DB.batch<Row>([
+  const [g, members, sessions, games, chips, adj, settle, photos, v, chipEv, yaku, chombo] = await c.env.DB.batch<Row>([
     c.env.DB.prepare(
       `SELECT g.id, g.name, g.join_hash != '' AS has_code, (SELECT value FROM meta WHERE key = 'bg:' || g.id) AS bg
        FROM groups g WHERE g.id=?`,
@@ -482,6 +492,7 @@ app.get("/api/g/:gid/state", async (c) => {
     q(`SELECT COALESCE(MAX(id),0) AS v FROM audit_logs WHERE group_id=?`),
     q(`SELECT * FROM chip_events WHERE group_id=? ORDER BY created_at`),
     q(`SELECT * FROM yakuman WHERE group_id=? ORDER BY created_at`),
+    q(`SELECT * FROM chombo WHERE group_id=? ORDER BY created_at`),
   ]);
   const gr = g.results[0];
   if (!gr) throw new HttpError(404, "グループが見つかりません。");
@@ -511,6 +522,7 @@ app.get("/api/g/:gid/state", async (c) => {
     photos: signedPhotos,
     chipEvents: chipEv.results.map(mapChipEvent),
     yakuman: yaku.results.map(mapYakuman),
+    chombo: chombo.results.map(mapChombo),
     version: Number(v.results[0]?.v ?? 0),
   });
 });
@@ -1111,6 +1123,33 @@ app.post("/api/g/:gid/yakuman", async (c) => {
   return c.json(y);
 });
 
+// チョンボの記録。点数と精算には影響せず、やった本人にチョンボコインが1枚入る（F-37）
+app.post("/api/g/:gid/chombo", async (c) => {
+  const b = await body<{ sessionId: unknown; memberId: unknown; memo?: unknown; clientId?: unknown }>(c);
+  const gid = c.get("actor").groupId;
+  const clientId = clientIdOf(b.clientId);
+  if (clientId) {
+    const dup = await c.env.DB.prepare(`SELECT * FROM chombo WHERE id=? AND group_id=?`).bind(clientId, gid).first<Row>();
+    if (dup) return c.json(mapChombo(dup));
+  }
+  const s = await requireSession(c, b.sessionId);
+  const ids = await memberIds(c);
+  if (typeof b.memberId !== "string" || !ids.has(b.memberId)) throw new HttpError(400, "チョンボした人を選んでください。");
+  const row = {
+    id: clientId ?? uid(),
+    sessionId: String(s.id),
+    memberId: b.memberId,
+    memo: b.memo === undefined ? "" : str(b.memo, "メモ", 60, true),
+    createdAt: now(),
+    deletedAt: null,
+  };
+  await c.env.DB.batch([
+    c.env.DB.prepare(`INSERT OR IGNORE INTO chombo(id,group_id,session_id,member_id,memo,created_at) VALUES (?,?,?,?,?,?)`).bind(row.id, gid, row.sessionId, row.memberId, row.memo, row.createdAt),
+    audit(c, "chombo", row.id, "insert", null, row),
+  ]);
+  return c.json(row);
+});
+
 // 紐づける半荘の変更（null で紐づけを外す）
 app.patch("/api/g/:gid/yakuman/:id", async (c) => {
   const row = await getRow(c, "yakuman", c.req.param("id"));
@@ -1307,7 +1346,13 @@ async function gachaEarned(c: C, gid: string, memberId: string) {
   )
     .bind(gid, memberId, GACHA.START)
     .first<{ n: number }>();
-  return earnedCoins(mine, y?.n ?? 0);
+  const ch = await c.env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM chombo x JOIN sessions s ON s.id=x.session_id
+     WHERE x.group_id=? AND x.member_id=? AND x.deleted_at IS NULL AND s.deleted_at IS NULL`,
+  )
+    .bind(gid, memberId)
+    .first<{ n: number }>();
+  return earnedCoins(mine, y?.n ?? 0, ch?.n ?? 0);
 }
 
 async function gachaPartner(c: C, gid: string, memberId: string): Promise<string> {
@@ -1330,8 +1375,8 @@ app.post("/api/g/:gid/gacha/pull", async (c) => {
   const gid = c.get("actor").groupId;
   const me = gachaMember(c);
   const b = await body<{ coin: unknown; count: unknown }>(c);
-  if (b.coin !== "normal" && b.coin !== "yakuman") throw new HttpError(400, "コインの種類を選んでください。");
-  if (b.count !== 1 && b.count !== GACHA.MULTI) throw new HttpError(400, "回数が正しくありません。");
+  if (b.coin !== "normal" && b.coin !== "yakuman" && b.coin !== "chombo") throw new HttpError(400, "コインの種類を選んでください。");
+  if (b.count !== 1 && (b.count !== GACHA.MULTI || b.coin === "chombo")) throw new HttpError(400, "回数が正しくありません。");
   const coin: CoinType = b.coin;
   const count = b.count;
   const [pulls, earned] = await Promise.all([gachaPulls(c, gid, me), gachaEarned(c, gid, me)]);
@@ -1339,12 +1384,13 @@ app.post("/api/g/:gid/gacha/pull", async (c) => {
   if (before[coin] < pullCost(coin, count)) throw new HttpError(400, "コインが足りません");
   const rnd = crypto.getRandomValues(new Uint32Array(count * 3));
   const r = (i: number) => rnd[i] / 2 ** 32;
-  const owned = buildCollection(pulls.map((p) => p.result)).spirits;
+  const startCol = buildCollection(pulls.map((p) => p.result));
+  const owned = startCol.spirits;
   const results: PullResult[] = [];
   const t = now();
   const stmts: D1PreparedStatement[] = [];
   for (let i = 0; i < count; i++) {
-    const res = rollPull(coin, r(i * 3), r(i * 3 + 1), r(i * 3 + 2), owned);
+    const res = rollPull(coin, r(i * 3), r(i * 3 + 1), r(i * 3 + 2), owned, startCol.items);
     if (res.kind === "spirit") owned.push(res.spiritId); // 10連の途中経過を次の重複判定へ反映
     results.push(res);
     const id = uid();

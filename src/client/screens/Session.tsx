@@ -1,4 +1,7 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { SpiritArt } from "../gacha/SpiritArt";
+import type { Partner } from "../game/TableView";
+import { ChomboList, QuickChombo } from "./Chombo";
 import { QuickYakuman } from "./QuickYakuman";
 import { OutboxBar, YakumanRow } from "./YakumanParts";
 import { navigate, type SessionTab } from "../router";
@@ -68,7 +71,21 @@ export function SessionScreen({ sid, tab }: { sid: string; tab: SessionTab }) {
 }
 
 function Scoreboard({ sid }: { sid: string }) {
-  const { state } = useGroup();
+  const { state, api } = useGroup();
+  // 各人の相棒。誰かが記録するたびに取り直す
+  const [partners, setPartners] = useState<Record<string, Partner>>({});
+  const version = state?.version;
+  useEffect(() => {
+    let alive = true;
+    api<Record<string, Partner>>("GET", "/gacha/partners")
+      .then((p) => {
+        if (alive) setPartners(p);
+      })
+      .catch(() => undefined); // 取れなくても収支は出す
+    return () => {
+      alive = false;
+    };
+  }, [api, version]);
   const rows = useMemo(() => {
     if (!state) return [];
     const b = sessionBalances(state, sid);
@@ -81,6 +98,7 @@ function Scoreboard({ sid }: { sid: string }) {
     <section className="board" aria-label="現在の収支">
       {rows.map(({ m, total, games }) => (
         <div key={m.id} className="readout">
+          {partners[m.id] && <SpiritArt spiritId={partners[m.id].spiritId} stage={partners[m.id].stage} art={partners[m.id].art} full="thumb" size={120} />}
           <span className="who">
             <i style={{ background: m.color }} />
             {m.name}
@@ -119,7 +137,9 @@ function RecordView({ sid }: { sid: string }) {
         半荘を記録
       </button>
       <QuickYakuman sid={sid} />
+      <QuickChombo sid={sid} />
       <OutboxBar />
+      <ChomboList sid={sid} />
       {waitingYaku.length > 0 && (
         <section className="yaku-waiting" aria-label="半荘に紐づく前の役満">
           {waitingYaku.map((y) => (

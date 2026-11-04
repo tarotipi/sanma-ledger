@@ -4,6 +4,7 @@ import { BlobImg, Confirm, Empty, RetryImg, Sheet, fmtDate, type ConfirmSpec } f
 import type { OutboxPhoto } from "../outbox";
 import type { Photo, Yakuman } from "../../shared/types";
 import { OutboxBar, useAddPhoto } from "./YakumanParts";
+import { ChomboHall } from "./Chombo";
 
 /** 役満の殿堂：これまでの役満と記念写真 */
 export function YakumanView() {
@@ -21,7 +22,13 @@ export function YakumanView() {
   const list = [...state.yakuman, ...unsent]
     .filter((y) => !y.deletedAt && liveSessions.has(y.sessionId) && (!y.gameId || liveGames.has(y.gameId)))
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  if (!list.length) return <Empty>まだ役満はありません。対局中の「役満！」か、半荘の記録の「役満が出た」から記録すると、ここに残ります。</Empty>;
+  if (!list.length)
+    return (
+      <>
+        <Empty>まだ役満はありません。対局中の「役満！」か、半荘の記録の「役満が出た」から記録すると、ここに残ります。</Empty>
+        <ChomboHall />
+      </>
+    );
   const count = new Map<string, number>();
   list.forEach((y) => count.set(y.memberId, (count.get(y.memberId) ?? 0) + 1));
   const ranking = [...count.entries()].sort((a, b) => b[1] - a[1]);
@@ -37,6 +44,7 @@ export function YakumanView() {
           <HallCard key={y.id} y={y} />
         ))}
       </ol>
+      <ChomboHall />
     </>
   );
 }

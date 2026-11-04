@@ -153,7 +153,7 @@ h3 {
 /* ---- 点数表示（このアプリの顔） ---- */
 .board {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
   gap: 2px;
   padding: 2px;
   margin: 0 -16px 16px;
@@ -1364,4 +1364,36 @@ dialog.sheet[open] {
   line-height: 1.3;
   text-align: center;
   color: var(--muted);
+}
+
+/* ---- 収支の欄の相棒 ---- */
+.readout .spirit-photo {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 2 / 3;
+  margin-bottom: 8px;
+}
+.readout > svg {
+  justify-self: center;
+  margin-bottom: 8px;
+}
+
+/* ---- チョンボ ---- */
+.chombo-now {
+  margin-top: 8px;
+  border-color: #c0392b;
+  color: #c0392b;
+}
+.chombo-list {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+}
+.chombo-row {
+  padding: 8px 12px;
+  border-radius: var(--radius-s);
+  background: color-mix(in srgb, #c0392b 10%, transparent);
+}
+.chombo-hall {
+  margin-top: 20px;
 }

@@ -12,6 +12,7 @@ const KINDS: { v: string; label: string }[] = [
   { v: "adjustments", label: "調整" },
   { v: "chip_events", label: "バイイン・枚数" },
   { v: "yakuman", label: "役満" },
+  { v: "chombo", label: "チョンボ" },
   { v: "settlements", label: "精算" },
   { v: "sessions", label: "対局の設定" },
   { v: "members", label: "メンバー" },
@@ -111,6 +112,11 @@ function describe(log: AuditLog, state: GroupState): string[] {
       const what = `${name(x.memberId)} の役満${x.name ? `（${String(x.name)}）` : ""}`;
       return [log.action === "insert" ? `${what}を記録` : `${what}を${ACTION[log.action]}`];
     }
+    case "chombo": {
+      const x = (log.after ?? log.before ?? {}) as Any;
+      const what = `${name(x.memberId)} のチョンボ${x.memo ? `（${String(x.memo)}）` : ""}`;
+      return [log.action === "insert" ? `${what}を記録` : `${what}を${ACTION[log.action]}`];
+    }
     case "photos":
       return [`写真を${ACTION[log.action]}`];
     case "group":
@@ -133,6 +139,7 @@ function isDeletedNow(log: AuditLog, state: GroupState): boolean {
     sessions: state.sessions,
     chip_events: state.chipEvents,
     yakuman: state.yakuman,
+    chombo: state.chombo,
   }[log.entity as string] as { id: string; deletedAt: string | null }[] | undefined;
   return !!table?.find((x) => x.id === log.entityId)?.deletedAt;
 }

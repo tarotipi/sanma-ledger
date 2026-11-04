@@ -4,19 +4,23 @@
 export const GACHA = {
   COST_NORMAL: 10, // 1回に使う雀霊コイン
   COST_YAKUMAN: 1, // 1回に使う役満コイン
+  COST_CHOMBO: 1, // 1回に使うチョンボコイン
   SPIRIT_RATE: 0.2, // 雀霊コイン：雀霊が出る確率（残りは装備）
   LEGEND_SPIRIT_RATE: 0.5, // 役満コイン：伝説の雀霊が出る確率（残りは伝説の装備）
   MAX_STAGE: 3, // 最大の進化段階
   SCORE_PER_COIN: 100, // 素点（百点単位）100＝1万点ごとに雀霊コイン1枚
   MIN_COIN_PER_GAME: 1, // 半荘ごとの最低枚数
   START: "2026-10-26T07:00:00.000Z", // これ以降に作られた半荘・役満だけ数える（既存DBの created_at と同じISO形式）
-  INITIAL: { normal: 30, yakuman: 2 }, // 初期配布
+  INITIAL: { normal: 30, yakuman: 2, chombo: 0 }, // 初期配布
   MULTI: 10, // 10連
 } as const;
 
-export type CoinType = "normal" | "yakuman";
-export type CoinBalance = { normal: number; yakuman: number };
-export type Rarity = "normal" | "legend";
+export type CoinType = "normal" | "yakuman" | "chombo";
+export type CoinBalance = { normal: number; yakuman: number; chombo: number };
+export type Rarity = "normal" | "legend" | "chombo";
+
+/** チョンボコインで解放して育てる専用の雀霊。カプセルからは出ない */
+export const CHOMBO_SPIRIT_ID = "drake";
 export type SystemId = "tsumo" | "ron" | "dora";
 
 export type GachaSystem = { id: SystemId; name: string; color: string };
@@ -62,12 +66,13 @@ const DEFS: Def[] = [
   ["peenuki", "dora", false, "北好きの 北条 冬馬・抜きの 北条 冬馬・北風の 北条 冬馬・北の将軍 北条 冬馬", "北が来たら即抜く。北以外もたまに抜こうとする。", "北の風見鶏・抜き取りピンセット・将軍のかぶと"],
   ["uradora", "dora", false, "のぞき好きの 裏辻 千里・めくりの 裏辻 千里・透視の 裏辻 千里・千里眼の 裏辻 千里", "裏ドラを先に見たがる。めくる前から目を細めている。", "透視メガネ・めくりの手袋・千里眼の水晶"],
   ["kandora", "dora", true, "カンの 神楽 宙・爆ぜる 神楽 宙・星の 神楽 宙・カンドラの覇王 神楽 宙", "カンのたびにドラを増やす伝説の雀士。卓が宇宙のように光りだす。", "爆発の導火線・星くずの袋・宇宙のかんむり"],
+  ["drake", "ron", false, "うっかり ドレイク・誤ロンの ドレイク・少牌の ドレイク・チョンボ王 ドレイク", "和了を宣言してから手牌を見る男。チョンボのたびに強くなる、この卓の反面教師。", "反省のハチマキ・点棒の罰金箱・二度見のメガネ"],
 ];
 
 export const SPIRITS: Spirit[] = DEFS.map(([id, system, legend, stages, desc]) => ({
   id,
   system,
-  rarity: legend ? "legend" : "normal",
+  rarity: id === CHOMBO_SPIRIT_ID ? "chombo" : legend ? "legend" : "normal",
   stages: stages.split("・") as Spirit["stages"],
   desc,
   color: SYSTEMS[system].color,
@@ -75,7 +80,7 @@ export const SPIRITS: Spirit[] = DEFS.map(([id, system, legend, stages, desc]) =
 }));
 
 export const ALL_ITEMS: GachaItem[] = DEFS.flatMap(([id, , legend, , , items]) =>
-  items.split("・").map((name, i) => ({ id: `${id}-${i + 1}`, spiritId: id, name, rarity: (legend ? "legend" : "normal") as Rarity })),
+  items.split("・").map((name, i) => ({ id: `${id}-${i + 1}`, spiritId: id, name, rarity: (id === CHOMBO_SPIRIT_ID ? "chombo" : legend ? "legend" : "normal") as Rarity })),
 );
 
 /** 画像の種類。card＝大きい立ち絵、thumb＝一覧、face＝顔の切り抜き */
@@ -111,16 +116,17 @@ export function coinsForGame(scoreHundreds: number): number {
 }
 
 /** 獲得コインの合計（初期配布＋半荘ごと＋役満ごと） */
-export function earnedCoins(myScoresHundreds: number[], yakumanCount: number): CoinBalance {
+export function earnedCoins(myScoresHundreds: number[], yakumanCount: number, chomboCount = 0): CoinBalance {
   return {
     normal: GACHA.INITIAL.normal + myScoresHundreds.reduce((a, s) => a + coinsForGame(s), 0),
     yakuman: GACHA.INITIAL.yakuman + yakumanCount,
+    chombo: GACHA.INITIAL.chombo + chomboCount,
   };
 }
 
 /** 1回あたりの消費枚数 */
 export function costPerPull(coin: CoinType): number {
-  return coin === "normal" ? GACHA.COST_NORMAL : GACHA.COST_YAKUMAN;
+  return coin === "normal" ? GACHA.COST_NORMAL : coin === "yakuman" ? GACHA.COST_YAKUMAN : GACHA.COST_CHOMBO;
 }
 
 /** 回数分の消費枚数 */
@@ -130,14 +136,18 @@ export function pullCost(coin: CoinType, count: number): number {
 
 /** これまでの結果から消費枚数を出す */
 export function spentCoins(pulls: { coin: CoinType }[]): CoinBalance {
-  const out: CoinBalance = { normal: 0, yakuman: 0 };
+  const out: CoinBalance = { normal: 0, yakuman: 0, chombo: 0 };
   for (const p of pulls) out[p.coin] += costPerPull(p.coin);
   return out;
 }
 
 export function coinBalance(earned: CoinBalance, spent: CoinBalance): CoinBalance {
   // 回した後で半荘や役満を消すと獲得が減るので、残高がマイナスにならないようにする
-  return { normal: Math.max(0, earned.normal - spent.normal), yakuman: Math.max(0, earned.yakuman - spent.yakuman) };
+  return {
+    normal: Math.max(0, earned.normal - spent.normal),
+    yakuman: Math.max(0, earned.yakuman - spent.yakuman),
+    chombo: Math.max(0, earned.chombo - spent.chombo),
+  };
 }
 
 const pick = <T>(list: T[], r: number): T => list[Math.min(list.length - 1, Math.max(0, Math.floor(r * list.length)))];
@@ -146,7 +156,14 @@ const pick = <T>(list: T[], r: number): T => list[Math.min(list.length - 1, Math
  * 1回引く。r1=雀霊か装備か、r2=どれが出るか、r3=重複時に変える装備（いずれも 0以上1未満）。
  * ownedSpiritIds には初期キャラも含めること（buildCollection の spirits をそのまま渡せばよい）。
  */
-export function rollPull(coin: CoinType, r1: number, r2: number, r3: number, ownedSpiritIds: readonly string[]): PullResult {
+export function rollPull(coin: CoinType, r1: number, r2: number, r3: number, ownedSpiritIds: readonly string[], items: Readonly<Record<string, number>> = {}): PullResult {
+  if (coin === "chombo") {
+    // 運に左右されない：最初の1枚で解放し、あとは一番少ない専属装備を増やす（3枚で1段階進化）
+    if (!ownedSpiritIds.includes(CHOMBO_SPIRIT_ID)) return { coin, kind: "spirit", spiritId: CHOMBO_SPIRIT_ID, itemId: null, converted: false };
+    const ids = SPIRIT_BY_ID.get(CHOMBO_SPIRIT_ID)?.itemIds ?? [];
+    const itemId = [...ids].sort((a, b) => (items[a] ?? 0) - (items[b] ?? 0))[0] ?? null;
+    return { coin, kind: "item", spiritId: CHOMBO_SPIRIT_ID, itemId, converted: false };
+  }
   const legend = coin === "yakuman";
   const spiritRate = legend ? GACHA.LEGEND_SPIRIT_RATE : GACHA.SPIRIT_RATE;
   if (r1 < spiritRate) {

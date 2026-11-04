@@ -493,3 +493,11 @@
 .stage-picker button.on {
   border-color: var(--gold, #e8b931);
 }
+
+.gacha-machine.chombo {
+  border-color: #c0392b;
+}
+.gacha-machine.chombo .gacha-coin-icon {
+  background: #c0392b;
+  color: #fff;
+}
