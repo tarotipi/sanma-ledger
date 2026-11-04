@@ -1,79 +1,10 @@
-import { useRef, useState } from "react";
-import { newId } from "../api";
+import { useState } from "react";
 import { useGroup } from "../store";
-import { Confirm, Sheet, fmtDate, type ConfirmSpec } from "../ui";
+import { Confirm, fmtDate, type ConfirmSpec } from "../ui";
 import type { Chombo } from "../../shared/types";
-import { YakuFields } from "./YakumanParts";
 
-/** 「チョンボ」：点数と精算には影響しない記録。やった本人にチョンボコインが入る（F-37） */
-export function QuickChombo({ sid }: { sid: string }) {
-  const { state, api, refresh, toast } = useGroup();
-  const [open, setOpen] = useState(false);
-  const [memberId, setMemberId] = useState("");
-  const [memo, setMemo] = useState("");
-  const [saving, setSaving] = useState(false);
-  // 送り直しても二重にならないように、開くたびにIDを1つ決めておく
-  const clientId = useRef(newId());
-  if (!state) return null;
-  const members = state.members.filter((m) => !m.hidden);
-
-  const save = async () => {
-    setSaving(true);
-    try {
-      await api("POST", "/chombo", { clientId: clientId.current, sessionId: sid, memberId, memo: memo.trim() });
-      setOpen(false);
-      toast("チョンボを記録しました（コイン+1）");
-      await refresh();
-    } catch (e) {
-      // 入力は消さずに画面を開いたままにする
-      toast(e instanceof Error ? e.message : "記録できませんでした。");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <>
-      <button
-        type="button"
-        className="btn wide chombo-now"
-        onClick={() => {
-          clientId.current = newId();
-          setMemberId("");
-          setMemo("");
-          setOpen(true);
-        }}
-      >
-        チョンボを記録
-      </button>
-      <Sheet
-        open={open}
-        onClose={() => setOpen(false)}
-        title="チョンボを記録"
-        footer={
-          <button type="button" className="btn primary wide" disabled={!memberId || saving} onClick={() => void save()}>
-            {saving ? "保存中…" : "記録する"}
-          </button>
-        }
-      >
-        {open && (
-          <section className="editor">
-            <h3>やった人</h3>
-            <div className="yaku-body">
-              <YakuFields members={members} memberId={memberId} name={memo} placeholder="メモ（任意）" list={false} maxLength={60} onChange={(p) => {
-                if (p.memberId !== undefined) setMemberId(p.memberId);
-                if (p.name !== undefined) setMemo(p.name);
-              }} />
-            </div>
-            <p className="note">点数と精算には影響しません。やった人にチョンボコインが1枚入ります。</p>
-          </section>
-        )}
-      </Sheet>
-    </>
-  );
-}
-
-function Row({ c, showDate }: { c: Chombo; showDate?: boolean }) {
+/** チョンボの1件。入力は半荘の記録の中で行う（F-37） */
+export function ChomboRow({ c, showDate }: { c: Chombo; showDate?: boolean }) {
   const { state, api, refresh, toast } = useGroup();
   const [confirm, setConfirm] = useState<ConfirmSpec | null>(null);
   if (!state) return null;
@@ -113,15 +44,15 @@ function Row({ c, showDate }: { c: Chombo; showDate?: boolean }) {
   );
 }
 
-/** この対局のチョンボ */
+/** この対局で半荘に紐づいていないチョンボ（半荘に紐づくものは半荘の詳細に出す） */
 export function ChomboList({ sid }: { sid: string }) {
   const { state } = useGroup();
-  const list = state?.chombo.filter((c) => c.sessionId === sid && !c.deletedAt) ?? [];
+  const list = state?.chombo.filter((c) => c.sessionId === sid && !c.deletedAt && !c.gameId) ?? [];
   if (!list.length) return null;
   return (
     <section className="chombo-list" aria-label="この対局のチョンボ">
       {list.map((c) => (
-        <Row key={c.id} c={c} />
+        <ChomboRow key={c.id} c={c} />
       ))}
     </section>
   );
@@ -145,7 +76,7 @@ export function ChomboHall() {
       </p>
       <div className="chombo-list">
         {list.map((c) => (
-          <Row key={c.id} c={c} showDate />
+          <ChomboRow key={c.id} c={c} showDate />
         ))}
       </div>
     </section>

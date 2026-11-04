@@ -7,11 +7,13 @@ import {
   GACHA,
   STARTER_SPIRIT_ID,
   buildCollection,
+  countBond,
   coinBalance,
   earnedCoins,
   pullCost,
   rollPull,
   spentCoins,
+  type BondCounts,
   type CoinType,
   type PullResult,
 } from "../src/shared/gacha";
@@ -293,6 +295,7 @@ const mapYakuman = (r: Row) => ({
 const mapChombo = (r: Row) => ({
   id: r.id,
   sessionId: r.session_id,
+  gameId: r.game_id,
   memberId: r.member_id,
   memo: r.memo,
   createdAt: r.created_at,
@@ -1125,7 +1128,7 @@ app.post("/api/g/:gid/yakuman", async (c) => {
 
 // チョンボの記録。点数と精算には影響せず、やった本人にチョンボコインが1枚入る（F-37）
 app.post("/api/g/:gid/chombo", async (c) => {
-  const b = await body<{ sessionId: unknown; memberId: unknown; memo?: unknown; clientId?: unknown }>(c);
+  const b = await body<{ sessionId: unknown; gameId?: unknown; memberId: unknown; memo?: unknown; clientId?: unknown }>(c);
   const gid = c.get("actor").groupId;
   const clientId = clientIdOf(b.clientId);
   if (clientId) {
@@ -1135,16 +1138,19 @@ app.post("/api/g/:gid/chombo", async (c) => {
   const s = await requireSession(c, b.sessionId);
   const ids = await memberIds(c);
   if (typeof b.memberId !== "string" || !ids.has(b.memberId)) throw new HttpError(400, "チョンボした人を選んでください。");
+  const gameId = typeof b.gameId === "string" && b.gameId ? b.gameId : null;
+  if (gameId) await checkYakumanGame(c, gameId, String(s.id), b.memberId);
   const row = {
     id: clientId ?? uid(),
     sessionId: String(s.id),
+    gameId,
     memberId: b.memberId,
     memo: b.memo === undefined ? "" : str(b.memo, "メモ", 60, true),
     createdAt: now(),
     deletedAt: null,
   };
   await c.env.DB.batch([
-    c.env.DB.prepare(`INSERT OR IGNORE INTO chombo(id,group_id,session_id,member_id,memo,created_at) VALUES (?,?,?,?,?,?)`).bind(row.id, gid, row.sessionId, row.memberId, row.memo, row.createdAt),
+    c.env.DB.prepare(`INSERT OR IGNORE INTO chombo(id,group_id,session_id,game_id,member_id,memo,created_at) VALUES (?,?,?,?,?,?,?)`).bind(row.id, gid, row.sessionId, gameId, row.memberId, row.memo, row.createdAt),
     audit(c, "chombo", row.id, "insert", null, row),
   ]);
   return c.json(row);
@@ -1268,15 +1274,18 @@ app.get("/api/img/:gid/p/:id/:size{full|thumb}", (c) => {
 // 雀霊の画像。署名は雀霊ごとなので、持っている雀霊のURLしか作れない（G-06）
 app.get("/api/img/:gid/art/:id/:file{(s[0-3]-(card|thumb|face)|item-[1-3])\\.webp}", (c) => {
   const { gid, id, file } = c.req.param();
-  return serveImage(c, gid, `art/${id}`, () => fromR2(c, `art/${id}/${file}`), file);
+  return serveImage(c, gid, `art/${id}`, () => fromR2(c, `art/${id}/${file}`), `${file}.v${ART_VERSION}`);
 });
+
+/** 絵を差し替えたら上げる。古い画像がキャッシュから出ないようにする */
+const ART_VERSION = "2";
 
 /** 雀霊の画像URLのひな形。{file} を s0-card.webp などに置き換えて使う */
 async function artUrls(secret: string, gid: string, spiritIds: Iterable<string>): Promise<Record<string, string>> {
   const out: Record<string, string> = {};
   for (const id of new Set(spiritIds)) {
     const url = await imgUrl(secret, gid, `art/${id}`);
-    out[id] = url.replace(`/art/${id}?`, `/art/${id}/{file}?`);
+    out[id] = `${url.replace(`/art/${id}?`, `/art/${id}/{file}?`)}&v=${ART_VERSION}`;
   }
   return out;
 }
@@ -1347,12 +1356,38 @@ async function gachaEarned(c: C, gid: string, memberId: string) {
     .bind(gid, memberId, GACHA.START)
     .first<{ n: number }>();
   const ch = await c.env.DB.prepare(
-    `SELECT COUNT(*) AS n FROM chombo x JOIN sessions s ON s.id=x.session_id
-     WHERE x.group_id=? AND x.member_id=? AND x.deleted_at IS NULL AND s.deleted_at IS NULL`,
+    `SELECT COUNT(*) AS n FROM chombo x JOIN sessions s ON s.id=x.session_id LEFT JOIN games g ON g.id=x.game_id
+     WHERE x.group_id=? AND x.member_id=? AND x.deleted_at IS NULL AND s.deleted_at IS NULL
+       AND (x.game_id IS NULL OR g.deleted_at IS NULL)`,
   )
     .bind(gid, memberId)
     .first<{ n: number }>();
   return earnedCoins(mine, y?.n ?? 0, ch?.n ?? 0);
+}
+
+/** メンバーごとの「相棒にして打った半荘の数」（G-12）。計算の本体は shared/gacha.ts の countBond */
+async function gachaBonds(c: C, gid: string): Promise<Map<string, BondCounts>> {
+  const [games, logs, profiles] = await c.env.DB.batch<Row>([
+    c.env.DB.prepare(
+      `SELECT g.scores, g.created_at FROM games g JOIN sessions s ON s.id=g.session_id
+       WHERE g.group_id=? AND g.deleted_at IS NULL AND s.deleted_at IS NULL AND g.created_at>=?`,
+    ).bind(gid, GACHA.BOND_START),
+    c.env.DB.prepare(`SELECT member_id, spirit_id, from_spirit_id, created_at FROM partner_log WHERE group_id=? ORDER BY created_at, rowid`).bind(gid),
+    c.env.DB.prepare(`SELECT member_id, partner_spirit_id FROM gacha_profiles WHERE group_id=?`).bind(gid),
+  ]);
+  const timesOf = new Map<string, string[]>();
+  for (const g of games.results) {
+    for (const sc of j<Score[]>(g.scores)) timesOf.set(sc.memberId, [...(timesOf.get(sc.memberId) ?? []), String(g.created_at)]);
+  }
+  const out = new Map<string, BondCounts>();
+  for (const [memberId, times] of timesOf) {
+    const mine = logs.results.filter((l) => l.member_id === memberId);
+    const profile = profiles.results.find((p) => p.member_id === memberId);
+    // 最初の変更より前の相棒。変更していなければ今の相棒
+    const initial = mine.length ? String(mine[0].from_spirit_id) : profile ? String(profile.partner_spirit_id) : STARTER_SPIRIT_ID;
+    out.set(memberId, countBond(times, mine.map((l) => ({ spiritId: String(l.spirit_id), startedAt: String(l.created_at) })), initial));
+  }
+  return out;
 }
 
 async function gachaPartner(c: C, gid: string, memberId: string): Promise<string> {
@@ -1365,10 +1400,10 @@ async function gachaPartner(c: C, gid: string, memberId: string): Promise<string
 app.get("/api/g/:gid/gacha", async (c) => {
   const gid = c.get("actor").groupId;
   const me = gachaMember(c);
-  const [pulls, earned, partner] = await Promise.all([gachaPulls(c, gid, me), gachaEarned(c, gid, me), gachaPartner(c, gid, me)]);
+  const [pulls, earned, partner, bonds] = await Promise.all([gachaPulls(c, gid, me), gachaEarned(c, gid, me), gachaPartner(c, gid, me), gachaBonds(c, gid)]);
   const spent = spentCoins(pulls);
   const owned = buildCollection(pulls.map((x) => x.result)).spirits;
-  return c.json({ earned, spent, coins: coinBalance(earned, spent), pulls, partner, art: await artUrls(await init(c.env), gid, owned) });
+  return c.json({ earned, spent, coins: coinBalance(earned, spent), pulls, partner, bond: bonds.get(me) ?? {}, art: await artUrls(await init(c.env), gid, owned) });
 });
 
 app.post("/api/g/:gid/gacha/pull", async (c) => {
@@ -1384,7 +1419,7 @@ app.post("/api/g/:gid/gacha/pull", async (c) => {
   if (before[coin] < pullCost(coin, count)) throw new HttpError(400, "コインが足りません");
   const rnd = crypto.getRandomValues(new Uint32Array(count * 3));
   const r = (i: number) => rnd[i] / 2 ** 32;
-  const startCol = buildCollection(pulls.map((p) => p.result));
+  const startCol = buildCollection(pulls.map((p) => p.result), (await gachaBonds(c, gid)).get(me) ?? {});
   const owned = startCol.spirits;
   const results: PullResult[] = [];
   const t = now();
@@ -1426,6 +1461,7 @@ app.put("/api/g/:gid/gacha/partner", async (c) => {
       `INSERT INTO gacha_profiles(group_id,member_id,partner_spirit_id,updated_at) VALUES (?,?,?,?)
        ON CONFLICT(group_id,member_id) DO UPDATE SET partner_spirit_id=excluded.partner_spirit_id, updated_at=excluded.updated_at`,
     ).bind(gid, me, b.spiritId, t),
+    c.env.DB.prepare(`INSERT INTO partner_log(id,group_id,member_id,spirit_id,from_spirit_id,created_at) VALUES (?,?,?,?,?,?)`).bind(uid(), gid, me, b.spiritId, prev, t),
     audit(c, "gacha_profiles", me, "update", { partnerSpiritId: prev }, { partnerSpiritId: b.spiritId }),
   ]);
   return c.json({ partner: b.spiritId });
@@ -1447,10 +1483,11 @@ app.get("/api/g/:gid/gacha/partners", async (c) => {
   }
   const out: Record<string, { spiritId: string; stage: number; art: string }> = {};
   const urls = await artUrls(await init(c.env), gid, members.results.map((m) => partnerOf.get(String(m.id)) ?? STARTER_SPIRIT_ID));
+  const bonds = await gachaBonds(c, gid);
   for (const m of members.results) {
     const id = String(m.id);
     const spiritId = partnerOf.get(id) ?? STARTER_SPIRIT_ID;
-    out[id] = { spiritId, stage: Math.max(0, buildCollection(pullsOf.get(id) ?? []).stages[spiritId] ?? 0), art: urls[spiritId] };
+    out[id] = { spiritId, stage: Math.max(0, buildCollection(pullsOf.get(id) ?? [], bonds.get(id) ?? {}).stages[spiritId] ?? 0), art: urls[spiritId] };
   }
   return c.json(out);
 });

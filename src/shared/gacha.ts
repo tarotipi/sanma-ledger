@@ -13,6 +13,8 @@ export const GACHA = {
   START: "2026-10-26T07:00:00.000Z", // これ以降に作られた半荘・役満だけ数える（既存DBの created_at と同じISO形式）
   INITIAL: { normal: 30, yakuman: 2, chombo: 0 }, // 初期配布
   MULTI: 10, // 10連
+  BOND_GAMES: 5, // 相棒にして打った半荘この数ごとに専属装備が1個増える（G-12）
+  BOND_START: "2026-11-04T15:00:00.000Z", // これ以降の半荘から数える（日本時間 2026-11-05 0時）
 } as const;
 
 export type CoinType = "normal" | "yakuman" | "chombo";
@@ -191,13 +193,43 @@ export type Collection = {
   stages: Record<string, number>;
 };
 
-export function buildCollection(pulls: readonly PullResult[]): Collection {
+/** 雀霊ごとの「相棒にして打った半荘の数」 */
+export type BondCounts = Record<string, number>;
+
+/**
+ * 半荘の時刻と相棒の変更履歴から、雀霊ごとの半荘数を数える。
+ * log は新しい相棒に変えた記録。initial は最初の変更より前の相棒。
+ */
+export function countBond(gameTimes: readonly string[], log: readonly { spiritId: string; startedAt: string }[], initial: string): BondCounts {
+  const sorted = [...log].sort((a, b) => a.startedAt.localeCompare(b.startedAt));
+  const out: BondCounts = {};
+  for (const t of gameTimes) {
+    if (t < GACHA.BOND_START) continue;
+    let partner = initial;
+    for (const l of sorted) {
+      if (l.startedAt <= t) partner = l.spiritId;
+    }
+    out[partner] = (out[partner] ?? 0) + 1;
+  }
+  return out;
+}
+
+export function buildCollection(pulls: readonly PullResult[], bond: Readonly<BondCounts> = {}): Collection {
   const spirits: string[] = [STARTER_SPIRIT_ID];
   const items: Record<string, number> = {};
   for (const p of pulls) {
     if (p.kind === "spirit") {
       if (!spirits.includes(p.spiritId)) spirits.push(p.spiritId);
     } else if (p.itemId) items[p.itemId] = (items[p.itemId] ?? 0) + 1;
+  }
+  // 相棒で打った分：一番少ない専属装備から順に増やす
+  for (const [spiritId, games] of Object.entries(bond)) {
+    const s = SPIRIT_BY_ID.get(spiritId);
+    if (!s) continue;
+    for (let i = 0; i < Math.floor(games / GACHA.BOND_GAMES); i++) {
+      const id = [...s.itemIds].sort((x, y) => (items[x] ?? 0) - (items[y] ?? 0))[0];
+      items[id] = (items[id] ?? 0) + 1;
+    }
   }
   const stages: Record<string, number> = {};
   for (const id of spirits) stages[id] = spiritStage(id, spirits, items);

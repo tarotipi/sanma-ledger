@@ -25,7 +25,7 @@ export function YakumanView() {
   if (!list.length)
     return (
       <>
-        <Empty>まだ役満はありません。対局中の「役満！」か、半荘の記録の「役満が出た」から記録すると、ここに残ります。</Empty>
+        <Empty>まだ役満はありません。半荘の記録の「役満が出た」から記録すると、ここに残ります。</Empty>
         <ChomboHall />
       </>
     );

@@ -36,7 +36,8 @@ export function GachaScreen() {
   const [detail, setDetail] = useState<Spirit | null>(null);
 
   const pulls = useMemo(() => (debug ? debugPulls : (data?.pulls.map((p) => p.result) ?? [])), [debug, debugPulls, data]);
-  const col = useMemo(() => buildCollection(pulls), [pulls]);
+  const bond = useMemo(() => (debug ? {} : (data?.bond ?? {})), [debug, data]);
+  const col = useMemo(() => buildCollection(pulls, bond), [pulls, bond]);
   const coins: CoinBalance = debug ? { normal: Infinity, yakuman: Infinity, chombo: Infinity } : (data?.coins ?? { normal: 0, yakuman: 0, chombo: 0 });
   const partner = data?.partner;
   const art = useMemo(() => data?.art ?? {}, [data]);
@@ -132,6 +133,7 @@ export function GachaScreen() {
             col={col}
             reveal={debug}
             art={art[detail.id]}
+            bondGames={bond[detail.id] ?? 0}
             isPartner={partner === detail.id}
             onPartner={() => void setPartner(detail.id)}
           />
@@ -268,7 +270,7 @@ function Zukan({ col, reveal, partner, art, onOpen }: { col: Collection; reveal:
   );
 }
 
-function Detail({ sp, col, reveal, art, isPartner, onPartner }: { sp: Spirit; col: Collection; reveal: boolean; art?: string; isPartner: boolean; onPartner: () => void }) {
+function Detail({ sp, col, reveal, art, bondGames, isPartner, onPartner }: { sp: Spirit; col: Collection; reveal: boolean; art?: string; bondGames: number; isPartner: boolean; onPartner: () => void }) {
   const owned = col.spirits.includes(sp.id);
   const show = owned || reveal;
   const stage = Math.max(0, col.stages[sp.id] ?? 0);
@@ -322,6 +324,11 @@ function Detail({ sp, col, reveal, art, isPartner, onPartner }: { sp: Spirit; co
             })}
           </ul>
           {!owned && <p className="note">まだ持っていません。装備だけ先に集めることもできます。</p>}
+          {owned && (
+            <p className="note">
+              相棒にして打った半荘：{bondGames}（あと{GACHA.BOND_GAMES - (bondGames % GACHA.BOND_GAMES)}半荘で専属装備が1個増えます）
+            </p>
+          )}
           {owned && (
             <button type="button" className="btn primary wide" disabled={isPartner} onClick={onPartner}>
               {isPartner ? "相棒にしています" : "相棒に設定"}

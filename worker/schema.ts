@@ -80,6 +80,14 @@ export const MIGRATIONS: { version: number; sql: string }[] = [
     memo TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, deleted_at TEXT)`,
   },
   { version: 6, sql: `CREATE INDEX IF NOT EXISTS chombo_group ON chombo(group_id)` },
+  { version: 7, sql: `ALTER TABLE chombo ADD COLUMN game_id TEXT` },
+  {
+    version: 8,
+    sql: `CREATE TABLE IF NOT EXISTS partner_log (
+    id TEXT PRIMARY KEY, group_id TEXT NOT NULL, member_id TEXT NOT NULL, spirit_id TEXT NOT NULL,
+    from_spirit_id TEXT NOT NULL, created_at TEXT NOT NULL)`,
+  },
+  { version: 9, sql: `CREATE INDEX IF NOT EXISTS partner_log_group ON partner_log(group_id, member_id)` },
 ];
 
 /** テーブル作成と移行をまとめて行う。同時に走っても、列の重複だけは適用済みとして扱う */

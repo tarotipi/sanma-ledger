@@ -107,6 +107,8 @@ export type Yakuman = {
 export type Chombo = {
   id: string;
   sessionId: string;
+  /** 記録した半荘（以前の記録は null） */
+  gameId: string | null;
   memberId: string;
   memo: string;
   createdAt: string;

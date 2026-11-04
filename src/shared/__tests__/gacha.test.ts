@@ -8,6 +8,7 @@ import {
   earnedCoins,
   rollPull,
   buildCollection,
+  countBond,
   coinBalance,
   spentCoins,
   pullCost,
@@ -144,5 +145,26 @@ describe("チョンボコイン", () => {
       expect(rollPull("yakuman", 0, r, r, []).spiritId).not.toBe("drake");
       expect(rollPull("yakuman", 0.9, r, r, []).spiritId).not.toBe("drake");
     }
+  });
+});
+
+describe("相棒で打った半荘（G-12）", () => {
+  const T = (d: number) => `2026-12-${String(d).padStart(2, "0")}T00:00:00.000Z`;
+  it("打った時点の相棒に数える", () => {
+    const log = [{ spiritId: "pon", startedAt: T(3) }];
+    expect(countBond([T(1), T(2), T(3), T(4)], log, STARTER_SPIRIT_ID)).toEqual({ [STARTER_SPIRIT_ID]: 2, pon: 2 });
+  });
+  it("開始より前の半荘は数えない", () => {
+    expect(countBond(["2026-01-01T00:00:00.000Z"], [], STARTER_SPIRIT_ID)).toEqual({});
+  });
+  it("5半荘で装備1個、15半荘で第1進化、45半荘で第3進化", () => {
+    const s = STARTER_SPIRIT_ID;
+    const items = (n: number) => Object.values(buildCollection([], { [s]: n }).items).reduce((a, b) => a + b, 0);
+    expect(items(4)).toBe(0);
+    expect(items(5)).toBe(1);
+    expect(buildCollection([], { [s]: 14 }).stages[s]).toBe(0);
+    expect(buildCollection([], { [s]: 15 }).stages[s]).toBe(1);
+    expect(buildCollection([], { [s]: 30 }).stages[s]).toBe(2);
+    expect(buildCollection([], { [s]: 45 }).stages[s]).toBe(GACHA.MAX_STAGE);
   });
 });

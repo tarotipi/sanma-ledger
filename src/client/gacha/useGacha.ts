@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { loadGroups, request } from "../api";
-import type { CoinBalance, CoinType, PullResult } from "../../shared/gacha";
+import type { BondCounts, CoinBalance, CoinType, PullResult } from "../../shared/gacha";
 
 export type GachaData = {
   earned: CoinBalance;
@@ -8,6 +8,8 @@ export type GachaData = {
   coins: CoinBalance;
   pulls: { id: string; coin: CoinType; result: PullResult; createdAt: string }[];
   partner: string;
+  /** 雀霊ごとの「相棒にして打った半荘の数」 */
+  bond: BondCounts;
   /** 持っている雀霊の画像URLのひな形（持っていない雀霊の分は来ない） */
   art: Record<string, string>;
 };

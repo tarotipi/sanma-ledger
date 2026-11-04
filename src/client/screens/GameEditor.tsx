@@ -12,6 +12,9 @@ type Slot = { memberId: string; text: string; neg: boolean; auto: boolean };
 /** 入力中の役満1件。id はそのまま役満の行のIDになる */
 type YakuRow = { id: string; memberId: string; name: string };
 
+/** 入力中のチョンボ1件。id はそのまま記録の行のIDになる */
+type ChomboInput = { id: string; memberId: string; memo: string };
+
 /** 入力の途中経過。カメラから戻ったときにアプリが再読み込みされても、続きから入力できるように残す */
 type EditorDraft = {
   gameId: string | null;
@@ -19,6 +22,7 @@ type EditorDraft = {
   slots: Slot[];
   ties: Record<string, number>;
   rows: YakuRow[];
+  chombos?: ChomboInput[];
   /** true なら、再読み込み後に記録の画面を開き直す */
   resume: boolean;
 };
@@ -136,6 +140,7 @@ export function GameEditor({
   const [confirm, setConfirm] = useState<ConfirmSpec | null>(null);
   const [hint, setHint] = useState<string | null>(null);
   const [rows, setRows] = useState<YakuRow[]>([]);
+  const [chombos, setChombos] = useState<ChomboInput[]>([]);
   const [saving, setSaving] = useState(false);
   // 同じ入力を送り直しても二重にならないように、開くたびにIDを1つ決めておく
   const clientId = useRef(newId());
@@ -153,10 +158,12 @@ export function GameEditor({
       setSlots(draft.slots);
       setTies(draft.ties);
       setRows(draft.rows);
+      setChombos(draft.chombos ?? []);
       return;
     }
     clientId.current = newId();
     setRows([]);
+    setChombos([]);
     if (game) {
       setSlots(game.scores.map((s) => ({ memberId: s.memberId, text: String(Math.abs(s.score)), neg: s.score < 0, auto: false })));
       const t: Record<string, number> = {};
@@ -184,11 +191,11 @@ export function GameEditor({
   // カメラを開く前の入力を残す
   const keepDraft = (nextResume: boolean) => {
     resume.current = nextResume;
-    saveEditorDraft(gid, sessionId, { gameId: game?.id ?? null, clientId: clientId.current, slots, ties, rows, resume: nextResume });
+    saveEditorDraft(gid, sessionId, { gameId: game?.id ?? null, clientId: clientId.current, slots, ties, rows, chombos, resume: nextResume });
   };
   useEffect(() => {
     if (open && resume.current) keepDraft(true);
-  }, [open, slots, ties, rows]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [open, slots, ties, rows, chombos]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const scores: Score[] | null = useMemo(() => {
     if (slots.length !== 3) return null;
@@ -220,6 +227,7 @@ export function GameEditor({
       if (cur.some((s) => s.memberId === id)) {
         // 卓から外した人の役満は残さない（出した人を選び直してもらう）
         setRows((rs) => rs.map((r) => (r.memberId === id ? { ...r, memberId: "" } : r)));
+        setChombos((cs) => cs.map((c) => (c.memberId === id ? { ...c, memberId: "" } : c)));
         return cur.filter((s) => s.memberId !== id);
       }
       if (cur.length >= 3) return cur;
@@ -279,9 +287,14 @@ export function GameEditor({
           await addYakuman({ id: r.id, gid, sessionId, gameId: saved.id, memberId: r.memberId, name: r.name.trim() });
         }
         await releaseHeld(gid, pendingRows.map((r) => r.id));
+        // チョンボも同じIDで送るので、送り直しても二重にならない
+        for (const c of chombos) {
+          await api("POST", "/chombo", { clientId: c.id, sessionId, gameId: saved.id, memberId: c.memberId, memo: c.memo.trim() });
+        }
         saveEditorDraft(gid, sessionId, null);
         resume.current = false;
         setRows([]);
+        setChombos([]);
         onClose();
         toast(game ? (admin ? "訂正しました" : `第${saved.seq}半荘を変更しました`) : `第${saved.seq}半荘を記録しました`);
         await refresh();
@@ -338,7 +351,7 @@ export function GameEditor({
           <button
             type="button"
             className="btn primary wide"
-            disabled={!validation?.ok || saving || rows.some((r) => !r.memberId)}
+            disabled={!validation?.ok || saving || rows.some((r) => !r.memberId) || chombos.some((c) => !c.memberId)}
             onClick={() => void save()}
           >
             {saving ? "保存中…" : game ? "変更を保存" : "記録する"}
@@ -480,7 +493,30 @@ export function GameEditor({
                 >
                   {rows.length ? "もう1件追加" : "役満が出た"}
                 </button>
-                {rows.some((r) => !r.memberId) && <p className="note">役満を出した人を選んでください。</p>}
+                {chombos.map((c, i) => (
+                  <div key={c.id} className="yaku-body chombo-input">
+                    <div className="row-between">
+                      <b>チョンボ {i + 1}件目</b>
+                      <button type="button" className="btn small ghost danger" onClick={() => setChombos((cs) => cs.filter((x) => x.id !== c.id))}>
+                        やめる
+                      </button>
+                    </div>
+                    <YakuFields
+                      members={slots.map((x) => mm.get(x.memberId))}
+                      memberId={c.memberId}
+                      name={c.memo}
+                      placeholder="メモ（任意）"
+                      list={false}
+                      maxLength={60}
+                      onChange={(p) => setChombos((cs) => cs.map((x) => (x.id === c.id ? { ...x, memberId: p.memberId ?? x.memberId, memo: p.name ?? x.memo } : x)))}
+                    />
+                    <p className="note">点数と精算には影響しません。やった人にチョンボコインが1枚入ります。</p>
+                  </div>
+                ))}
+                <button type="button" className="chip chombo-btn" onClick={() => setChombos((cs) => [...cs, { id: newId(), memberId: "", memo: "" }])}>
+                  {chombos.length ? "チョンボをもう1件" : "チョンボした"}
+                </button>
+                {(rows.some((r) => !r.memberId) || chombos.some((c) => !c.memberId)) && <p className="note">役満・チョンボをした人を選んでください。</p>}
                 <YakuNames />
               </div>
             </>

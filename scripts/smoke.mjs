@@ -161,6 +161,15 @@ ok(pullCh.status === 200 && pullCh.data.results[0].spiritId === "drake" && pullC
 ok((await call("POST", `/g/${gid}/gacha/pull`, { token: T, member: C, body: { coin: "chombo", count: 1 } })).status === 400, "コインがなければ回せない");
 ok((await call("POST", `/g/${gid}/chombo/${chId}/delete`, { token: T, member: M })).status === 200, "チョンボの記録を削除");
 
+// 半荘に紐づくチョンボ
+const chG = await call("POST", `/g/${gid}/chombo`, { token: T, member: M, body: { clientId: uuid(), sessionId: sid, gameId: g1.data.id, memberId: A, memo: "" } });
+ok(chG.status === 200 && chG.data.gameId === g1.data.id, "半荘に紐づけてチョンボを記録");
+ok((await call("POST", `/g/${gid}/chombo`, { token: T, member: M, body: { sessionId: sid, gameId: g1.data.id, memberId: D } })).status === 400, "卓にいない人のチョンボは400");
+// 相棒の変更が記録され、半荘の数が返る
+const partnerSet = await call("PUT", `/g/${gid}/gacha/partner`, { token: T, member: A, body: { spiritId: "tsumori" } });
+ok(partnerSet.status === 200, "相棒を設定");
+ok(typeof (await call("GET", `/g/${gid}/gacha`, { token: T, member: A })).data.bond === "object", "相棒で打った半荘の数が返る");
+
 // ホーム画面に追加したアプリの設定
 const mf = await fetch(`${base}/api/manifest/${gid}`);
 const mfj = await mf.json();

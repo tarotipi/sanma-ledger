@@ -10,7 +10,7 @@ import { GACHA, SPIRITS, SYSTEMS, buildCollection, spiritById } from "../../shar
 export function ProfileScreen() {
   const { gid, member } = useGroup();
   const { data, error } = useGacha(gid);
-  const col = useMemo(() => buildCollection(data?.pulls.map((p) => p.result) ?? []), [data]);
+  const col = useMemo(() => buildCollection(data?.pulls.map((p) => p.result) ?? [], data?.bond ?? {}), [data]);
   const sp = data ? spiritById(data.partner) : undefined;
   const stage = sp ? Math.max(0, col.stages[sp.id] ?? 0) : 0;
   const evolved = Object.values(col.stages).filter((s) => s > 0).length;

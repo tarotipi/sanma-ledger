@@ -1279,12 +1279,6 @@ dialog.sheet[open] {
 }
 
 /* ---- 役満の記録・送信待ち ---- */
-.yaku-now {
-  margin-top: 10px;
-  background: color-mix(in srgb, var(--gold) 20%, transparent);
-  border-color: var(--gold);
-  font-weight: 700;
-}
 .yaku .yaku-body,
 .yaku-waiting .yaku-body {
   width: 100%;
@@ -1379,10 +1373,17 @@ dialog.sheet[open] {
 }
 
 /* ---- チョンボ ---- */
-.chombo-now {
-  margin-top: 8px;
+.chombo-btn {
   border-color: #c0392b;
   color: #c0392b;
+}
+.chombo-input {
+  background: color-mix(in srgb, #c0392b 10%, transparent);
+}
+.tag.chombo-tag {
+  background: #c0392b;
+  color: #fff;
+  font-weight: 700;
 }
 .chombo-list {
   display: grid;
