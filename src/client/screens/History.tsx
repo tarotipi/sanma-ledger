@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from "react";
 import { navigate, usePath } from "../router";
 import { useGroup } from "../store";
 import { Empty, fmtDateTime } from "../ui";
+import { ChomboHall } from "./Chombo";
+import { YakumanView } from "./Yakuman";
 import { fmtScore, fmtYen } from "../../shared/mahjong";
 import type { AuditLog, GroupState, Score } from "../../shared/types";
 
@@ -144,7 +146,35 @@ function isDeletedNow(log: AuditLog, state: GroupState): boolean {
   return !!table?.find((x) => x.id === log.entityId)?.deletedAt;
 }
 
+/** 履歴の入口：変更履歴・役満の殿堂・チョンボの記録を切り替える */
 export function HistoryView() {
+  const { query } = usePath();
+  const [view, setView] = useState<"log" | "yakuman" | "chombo">("log");
+  // 1件の記録に絞り込んでいるときは変更履歴を出す
+  const shown = query.get("entityId") ? "log" : view;
+  return (
+    <>
+      <div className="seg history-seg">
+        {(
+          [
+            ["log", "変更履歴"],
+            ["yakuman", "役満の殿堂"],
+            ["chombo", "チョンボ"],
+          ] as const
+        ).map(([v, label]) => (
+          <button key={v} type="button" className={shown === v ? "on" : ""} aria-pressed={shown === v} onClick={() => setView(v)}>
+            {label}
+          </button>
+        ))}
+      </div>
+      {shown === "log" && <ChangeLog />}
+      {shown === "yakuman" && <YakumanView />}
+      {shown === "chombo" && <ChomboHall />}
+    </>
+  );
+}
+
+function ChangeLog() {
   const { state, api, refresh, toast } = useGroup();
   const { query } = usePath();
   const entityId = query.get("entityId") ?? "";

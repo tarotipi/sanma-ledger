@@ -5,6 +5,7 @@ import { RULES, calcGame, calcTransfers, fmtYen, splitFee } from "../../shared/m
 import type { Adjustment, AdjustmentKind, GroupState, Member } from "../../shared/types";
 import { downloadCsv, participants, sessionBalances, sessionOf, settledImpact } from "../logic";
 import { SettledWarning } from "./GameEditor";
+import { VenueFeeCard } from "./VenueFee";
 
 export function SettleView({ sid }: { sid: string }) {
   const { state, api, refresh, toast } = useGroup();
@@ -110,6 +111,7 @@ export function SettleView({ sid }: { sid: string }) {
 
   return (
     <>
+      <VenueFeeCard sid={sid} />
       {rows.length > 0 && hasChips && (
         <div className="seg">
           <button type="button" className={withChips ? "on" : ""} onClick={() => setWithChips(true)}>

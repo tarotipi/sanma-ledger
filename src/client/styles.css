@@ -1380,11 +1380,6 @@ dialog.sheet[open] {
 .chombo-input {
   background: color-mix(in srgb, #c0392b 10%, transparent);
 }
-.tag.chombo-tag {
-  background: #c0392b;
-  color: #fff;
-  font-weight: 700;
-}
 .chombo-list {
   display: grid;
   gap: 6px;
@@ -1397,4 +1392,40 @@ dialog.sheet[open] {
 }
 .chombo-hall {
   margin-top: 20px;
+}
+
+/* ---- 場代 ---- */
+.venue-fee {
+  border: 2px solid var(--felt);
+  border-radius: var(--radius-s);
+  padding: 12px;
+  margin-bottom: 16px;
+}
+.venue-fee label {
+  display: grid;
+  gap: 6px;
+}
+.fee-rows {
+  list-style: none;
+  padding: 0;
+  margin: 10px 0;
+  display: grid;
+  gap: 8px;
+}
+.fee-rows li {
+  display: grid;
+  gap: 4px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.fee-rows .note {
+  margin: 0;
+}
+.btn.fee-done {
+  background: var(--felt);
+  border-color: var(--felt);
+  color: #fff;
+}
+.history-seg {
+  margin-bottom: 12px;
 }

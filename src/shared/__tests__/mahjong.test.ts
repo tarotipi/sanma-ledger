@@ -5,6 +5,7 @@ import {
   calcStats,
   calcTransfers,
   splitFee,
+  splitFeeByResult,
   suggestNext,
   validateGame,
 } from "../mahjong";
@@ -244,5 +245,65 @@ describe("抜け番の提案", () => {
     const games = [G(1, ["A", "B", "C"]), G(2, ["C", "D", "E"]), G(3, ["A", "B", "E"])];
     expect(suggestNext(games, order)?.sitOut.length).toBe(2);
     expect(suggestNext(games, order, new Set(["E", "D"]))?.players.sort()).toEqual(["A", "B", "C"]);
+  });
+});
+
+describe("場代を収支に応じて分ける（F-40）", () => {
+  type Row = [string, number, number, number?, boolean?];
+  const R = (...rows: Row[]) => rows.map(([memberId, day, lifetime, games = 10, settled = false]) => ({ memberId, day, lifetime, games, settled }));
+  const yen = (x: ReturnType<typeof splitFeeByResult>) => x.map((r) => r.yen);
+  it.each([
+    ["10/19 1回目", R(["ド", 26200, 0, 36], ["赤", 3050, 0, 32], ["太", 3050, 0, 39], ["亀", -32300, 0, 46]), [4000, 1000, 1000, 0]],
+    ["10/19 2回目", R(["赤", 18350, 3050, 44], ["亀", -9100, -32300, 44], ["太", -9250, 3050, 44]), [6000, 0, 0]],
+    ["10/25", R(["赤", 28350, 21400, 31], ["亀", -4100, -41400, 31], ["ド", -24250, 26200, 31]), [6000, 0, 0]],
+    ["10/28", R(["太", 13800, -6200, 12], ["ド", 13550, 1950, 28], ["赤", -4950, 49750, 40], ["亀", -22400, -45500, 40]), [1800, 2400, 1800, 0]],
+    ["11/01", R(["太", 27900, 7600, 66], ["赤", 7850, 44800, 66], ["亀", -35750, -67900, 66]), [3500, 2500, 0]],
+    ["11/04", R(["太", 12150, 35500, 45], ["赤", -800, 52650, 45], ["ド", -3250, 15500, 24], ["亀", -8100, -103650, 45]), [3300, 2200, 500, 0]],
+  ])("過去の対局の試算どおり：%s", (_, rows, want) => {
+    expect(yen(splitFeeByResult(6000, rows))).toEqual(want);
+  });
+  it("当日30,000円以上の人がいれば、その人だけが払う", () => {
+    expect(yen(splitFeeByResult(6000, R(["A", 30000, 0], ["B", 2000, 100000], ["C", -32000, 0])))).toEqual([6000, 0, 0]);
+  });
+  it("30,000円以上が2人なら、その2人で分ける", () => {
+    const r = splitFeeByResult(6000, R(["A", 35000, 0], ["B", 30000, 0], ["C", -65000, 0]));
+    expect(r[2].yen).toBe(0);
+    expect(r[0].yen + r[1].yen).toBe(6000);
+    expect(r[0].yen).toBeGreaterThan(r[1].yen);
+  });
+  it("通算の補正は、勝ちが25%で上限+15,000円、負けが5%で上限−5,000円", () => {
+    const big = splitFeeByResult(1000, R(["A", 0, 10000000], ["B", 0, 0]));
+    expect(big[0].weight).toBe(20000);
+    expect(big[1].weight).toBe(5000);
+    expect(splitFeeByResult(1000, R(["A", 0, 50000], ["B", 0, 0]))[0].weight).toBe(17500);
+    expect(splitFeeByResult(1000, R(["A", 0, -50000], ["B", 0, 0]))[0].weight).toBe(2500);
+    expect(splitFeeByResult(1000, R(["A", 1000, -10000000], ["B", 1000, 0]))[0].weight).toBe(1000);
+  });
+  it("通算+50,000なら当日−15,000でも数百円払う。上限を超えて負けた日は払わない", () => {
+    expect(yen(splitFeeByResult(6000, R(["A", -15000, 50000], ["B", 10000, 0], ["C", 5000, 0])))).toEqual([500, 3300, 2200]);
+    expect(yen(splitFeeByResult(6000, R(["A", -25000, 200000], ["B", 15000, 0], ["C", 10000, 0])))).toEqual([0, 3400, 2600]);
+  });
+  it("打った半荘が少ない人は軽い（一番多い人が1倍、半分の人が0.75倍）", () => {
+    const r = splitFeeByResult(1000, R(["A", 5000, 0, 40], ["B", 5000, 0, 20]));
+    expect(r[0].weight).toBe(10000);
+    expect(r[1].weight).toBe(7500);
+  });
+  it("前回の精算を済ませた人は重みが2割軽い", () => {
+    const r = splitFeeByResult(1000, R(["A", 5000, 0, 10, true], ["B", 5000, 0, 10, false]));
+    expect(r[0].weight).toBe(8000);
+    expect(r[1].weight).toBe(10000);
+  });
+  it("全員の重みが0なら均等に分ける", () => {
+    expect(yen(splitFeeByResult(3000, R(["A", -6000, 0], ["B", -6000, 0], ["C", -6000, 0])))).toEqual([1000, 1000, 1000]);
+  });
+  it("100円単位で分け、余りは一番勝っている人に足す。合計は場代と一致する", () => {
+    const r = splitFeeByResult(6050, R(["A", 10000, 0], ["B", 5000, 0], ["C", -15000, 0]));
+    expect(r.reduce((a, x) => a + x.yen, 0)).toBe(6050);
+    expect(r[1].yen % 100).toBe(0);
+    expect(r[0].yen % 100).toBe(50);
+  });
+  it("金額が0か対象者がいなければ空", () => {
+    expect(splitFeeByResult(0, R(["A", 1, 0]))).toEqual([]);
+    expect(splitFeeByResult(1000, [])).toEqual([]);
   });
 });

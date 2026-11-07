@@ -1,10 +1,10 @@
 import { useState } from "react";
 import { useGroup } from "../store";
-import { Confirm, fmtDate, type ConfirmSpec } from "../ui";
+import { Confirm, Empty, fmtDate, type ConfirmSpec } from "../ui";
 import type { Chombo } from "../../shared/types";
 
 /** チョンボの1件。入力は半荘の記録の中で行う（F-37） */
-export function ChomboRow({ c, showDate }: { c: Chombo; showDate?: boolean }) {
+function ChomboRow({ c, showDate }: { c: Chombo; showDate?: boolean }) {
   const { state, api, refresh, toast } = useGroup();
   const [confirm, setConfirm] = useState<ConfirmSpec | null>(null);
   if (!state) return null;
@@ -44,33 +44,18 @@ export function ChomboRow({ c, showDate }: { c: Chombo; showDate?: boolean }) {
   );
 }
 
-/** この対局で半荘に紐づいていないチョンボ（半荘に紐づくものは半荘の詳細に出す） */
-export function ChomboList({ sid }: { sid: string }) {
-  const { state } = useGroup();
-  const list = state?.chombo.filter((c) => c.sessionId === sid && !c.deletedAt && !c.gameId) ?? [];
-  if (!list.length) return null;
-  return (
-    <section className="chombo-list" aria-label="この対局のチョンボ">
-      {list.map((c) => (
-        <ChomboRow key={c.id} c={c} />
-      ))}
-    </section>
-  );
-}
-
-/** 全対局のチョンボ（役満の殿堂の下に出す） */
+/** 全対局のチョンボ（履歴から見る） */
 export function ChomboHall() {
   const { state } = useGroup();
   if (!state) return null;
   const live = new Set(state.sessions.filter((s) => !s.deletedAt).map((s) => s.id));
   const list = state.chombo.filter((c) => !c.deletedAt && live.has(c.sessionId)).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  if (!list.length) return null;
+  if (!list.length) return <Empty>チョンボの記録はありません。</Empty>;
   const count = new Map<string, number>();
   list.forEach((c) => count.set(c.memberId, (count.get(c.memberId) ?? 0) + 1));
   const mm = new Map(state.members.map((m) => [m.id, m]));
   return (
     <section className="chombo-hall">
-      <h2>チョンボの記録</h2>
       <p className="note">
         チョンボの回数：{[...count.entries()].sort((a, b) => b[1] - a[1]).map(([id, n]) => `${mm.get(id)?.name} ${n}回`).join("　")}
       </p>

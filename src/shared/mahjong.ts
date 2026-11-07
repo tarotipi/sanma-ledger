@@ -15,6 +15,16 @@ export const RULES = {
   CHIP_START: 20,
   /** 新しい順にこの件数までは警告なしで編集できる（W-01） */
   FREE_EDIT_LATEST: 1,
+  /** 場代を収支に応じて分けるときの数値（F-40） */
+  FEE_UNIT: 100, // 100円単位
+  FEE_LOSS_LIMIT: 5000, // 当日この額を超えて負けた人は払わない（通算の補正の前）
+  FEE_BIG_WIN: 30000, // 当日この額以上勝った人がいれば、その人たちだけで払う
+  FEE_LIFETIME_PERCENT: 5, // 通算で負けている人の補正の割合
+  FEE_LIFETIME_MAX: 5000, // 通算で負けている人の補正の上限
+  FEE_LIFETIME_WIN_PERCENT: 25, // 通算で勝っている人の補正の割合
+  FEE_LIFETIME_WIN_MAX: 15000, // 通算で勝っている人の補正の上限
+  FEE_GAMES_BASE: 0.5, // 半荘数の効き。一番多く打った人が1倍、0半荘に近い人がこの倍率
+  FEE_SETTLED_FACTOR: 0.8, // 前回の精算を済ませた人の重みの倍率
 } as const;
 
 export type Rank = 1 | 2 | 3;
@@ -377,4 +387,65 @@ export function suggestNext(
       return (ia < 0 ? 9 : ia) - (ib < 0 ? 9 : ib) || order(a) - order(b);
     });
   return { players, sitOut };
+}
+
+export type FeeShare = {
+  memberId: string;
+  /** 当日の収支（麻雀＋チップ。調整は含めない） */
+  day: number;
+  /** 今回より前の対局の通算（麻雀＋チップ） */
+  lifetime: number;
+  /** この対局で打った半荘数 */
+  games: number;
+  /** 前回の対局の精算を済ませたか */
+  settled: boolean;
+  /** 分ける比率の元になる重み */
+  weight: number;
+  /** 負担額（プラスの円） */
+  yen: number;
+};
+
+/**
+ * 場代を当日の収支と通算に応じて分ける（F-40）。
+ * 基準＝当日の収支＋FEE_LOSS_LIMIT＋通算の補正。0未満は払わない。
+ * 重み＝基準×半荘数の倍率×前回の精算の倍率。
+ * 当日 FEE_BIG_WIN 以上の人がいれば、その人たちだけで分ける。全員の重みが0なら均等に分ける。
+ * FEE_UNIT 単位で分け、割り切れない余りは一番勝っている人に足す。合計は amount と一致する。
+ */
+export function splitFeeByResult(amount: number, rows: readonly { memberId: string; day: number; lifetime: number; games: number; settled: boolean }[]): FeeShare[] {
+  if (amount <= 0 || rows.length === 0) return [];
+  const correction = (lifetime: number) => {
+    if (lifetime > 0) return Math.min(RULES.FEE_LIFETIME_WIN_MAX, Math.trunc((lifetime * RULES.FEE_LIFETIME_WIN_PERCENT) / 100));
+    return Math.max(-RULES.FEE_LIFETIME_MAX, Math.trunc((lifetime * RULES.FEE_LIFETIME_PERCENT) / 100));
+  };
+  const maxGames = Math.max(...rows.map((r) => r.games));
+  const gamesFactor = (games: number) => (maxGames > 0 ? RULES.FEE_GAMES_BASE + ((1 - RULES.FEE_GAMES_BASE) * games) / maxGames : 1);
+  const bigWin = rows.some((r) => r.day >= RULES.FEE_BIG_WIN);
+  let list: FeeShare[] = rows.map((r) => ({
+    ...r,
+    weight:
+      bigWin && r.day < RULES.FEE_BIG_WIN
+        ? 0
+        : Math.max(0, r.day + RULES.FEE_LOSS_LIMIT + correction(r.lifetime)) * gamesFactor(r.games) * (r.settled ? RULES.FEE_SETTLED_FACTOR : 1),
+    yen: 0,
+  }));
+  if (list.every((r) => r.weight === 0)) list = list.map((r) => ({ ...r, weight: 1 }));
+  const total = list.reduce((a, r) => a + r.weight, 0);
+  const units = Math.floor(amount / RULES.FEE_UNIT);
+  const raw = list.map((r) => (r.weight * units) / total);
+  const floors = raw.map(Math.floor);
+  let rest = units - floors.reduce((a, b) => a + b, 0);
+  const order = list.map((_, i) => i).sort((a, b) => raw[b] - floors[b] - (raw[a] - floors[a]) || list[b].day - list[a].day);
+  for (const i of order) {
+    if (rest <= 0) break;
+    floors[i]++;
+    rest--;
+  }
+  const out = list.map((r, i) => ({ ...r, yen: floors[i] * RULES.FEE_UNIT }));
+  const remainder = amount - units * RULES.FEE_UNIT;
+  if (remainder > 0) {
+    const top = out.filter((r) => r.weight > 0).sort((a, b) => b.day - a.day)[0];
+    top.yen += remainder;
+  }
+  return out;
 }

@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { SpiritArt } from "../gacha/SpiritArt";
 import type { Partner } from "../game/TableView";
-import { ChomboList, ChomboRow } from "./Chombo";
 import { OutboxBar, YakumanRow } from "./YakumanParts";
 import { navigate, type SessionTab } from "../router";
 import { liveGames, useGroup } from "../store";
@@ -126,7 +125,6 @@ function RecordView({ sid }: { sid: string }) {
   const games = liveGames(state, sid).sort((a, b) => b.seq - a.seq);
   const mm = new Map(state.members.map((m) => [m.id, m]));
   const yakuGames = new Set(state.yakuman.filter((y) => !y.deletedAt && y.gameId).map((y) => y.gameId));
-  const chomboGames = new Set(state.chombo.filter((x) => !x.deletedAt && x.gameId).map((x) => x.gameId));
   // 「役満！」で記録して、まだ半荘に紐づいていないもの
   const waitingYaku = state.yakuman.filter((y) => y.sessionId === sid && !y.deletedAt && !y.gameId);
 
@@ -137,7 +135,6 @@ function RecordView({ sid }: { sid: string }) {
         半荘を記録
       </button>
       <OutboxBar />
-      <ChomboList sid={sid} />
       {waitingYaku.length > 0 && (
         <section className="yaku-waiting" aria-label="半荘に紐づく前の役満">
           {waitingYaku.map((y) => (
@@ -162,7 +159,6 @@ function RecordView({ sid }: { sid: string }) {
                     <small>{fmtDateTime(g.createdAt).split(" ")[1]}</small>
                     {edited && <em className="tag">変更</em>}
                     {yakuGames.has(g.id) && <em className="tag yaku-tag">役満</em>}
-                    {chomboGames.has(g.id) && <em className="tag chombo-tag">チョンボ</em>}
                   </span>
                   <span className="lines">
                     {r.map((x) => (
@@ -297,7 +293,6 @@ function GameDetail({ game, onClose, onEdit }: { game: Game | null; onClose: () 
               state.yakuman
                 .filter((y) => y.gameId === g.id && !y.deletedAt)
                 .map((y) => <YakumanRow key={y.id} y={y} />)}
-            {!pending && state.chombo.filter((x) => x.gameId === g.id && !x.deletedAt).map((x) => <ChomboRow key={x.id} c={x} />)}
             {!pending && (
               <>
                 <button

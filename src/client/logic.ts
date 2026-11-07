@@ -7,6 +7,29 @@ export function sessionOf(state: GroupState, sid: string): Session | undefined {
   return state.sessions.find((s) => s.id === sid);
 }
 
+/** この対局より前の通算（麻雀＋チップ。調整は含めない）。場代の計算に使う */
+export function lifetimeBefore(state: GroupState, sid: string): Record<string, number> {
+  const cur = sessionOf(state, sid);
+  const out: Record<string, number> = {};
+  if (!cur) return out;
+  const key = (s: Session) => `${s.playedOn} ${s.createdAt}`;
+  for (const s of state.sessions) {
+    if (s.deletedAt || s.id === sid || key(s) >= key(cur)) continue;
+    for (const [id, b] of Object.entries(sessionBalances(state, s.id))) out[id] = (out[id] ?? 0) + b.mahjong + b.chips;
+  }
+  return out;
+}
+
+/** その人が打った、この対局より前で一番新しい対局 */
+export function previousSessionOf(state: GroupState, sid: string, memberId: string): Session | undefined {
+  const cur = sessionOf(state, sid);
+  if (!cur) return undefined;
+  const key = (s: Session) => `${s.playedOn} ${s.createdAt}`;
+  return state.sessions
+    .filter((s) => !s.deletedAt && s.id !== sid && key(s) < key(cur) && liveGames(state, s.id).some((g) => g.scores.some((x) => x.memberId === memberId)))
+    .sort((a, b) => key(b).localeCompare(key(a)))[0];
+}
+
 export function sessionBalances(state: GroupState, sid: string): Record<string, Balance> {
   const s = sessionOf(state, sid);
   return calcBalances({
