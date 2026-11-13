@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useGroup } from "../store";
 import { Confirm, Name, type ConfirmSpec } from "../ui";
-import { RULES, fmtYen, splitFeeByResult } from "../../shared/mahjong";
+import { fmtYen, splitFeeByResult } from "../../shared/mahjong";
 import type { Adjustment, GroupState } from "../../shared/types";
 import { lifetimeBefore, previousSessionOf, sessionBalances, settledImpact } from "../logic";
 import { SettledWarning } from "./GameEditor";
@@ -114,9 +114,6 @@ export function VenueFeeCard({ sid }: { sid: string }) {
           );
         })}
       </ul>
-      <p className="note">
-        勝っている人、通算で勝っている人、長く打った人が多めに払います。当日{RULES.FEE_LOSS_LIMIT.toLocaleString()}円を超える負けは基本的に払わず、当日{RULES.FEE_BIG_WIN.toLocaleString()}円以上勝った人がいれば、その人が全額払います。前回の精算を済ませた人は2割軽くなります。
-      </p>
       {!existing && (
         <button type="button" className="btn primary wide" disabled={!valid || saving} onClick={() => void save()}>
           {saving ? "記録中…" : "この金額で場代を記録"}
