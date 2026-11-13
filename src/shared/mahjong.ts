@@ -21,9 +21,8 @@ export const RULES = {
   FEE_BIG_WIN: 30000, // 当日この額以上勝った人がいれば、その人たちだけで払う
   FEE_LIFETIME_PERCENT: 5, // 通算で負けている人の補正の割合
   FEE_LIFETIME_MAX: 5000, // 通算で負けている人の補正の上限
-  FEE_LIFETIME_WIN_PERCENT: 25, // 通算で勝っている人の補正の割合
-  FEE_LIFETIME_WIN_MAX: 15000, // 通算で勝っている人の補正の上限
-  FEE_LIFETIME_TOP_FACTOR: 3, // 通算で一番勝っている人は、勝ちの補正の割合と上限をこの倍にする（F-42）
+  FEE_LIFETIME_WIN_PERCENT: 75, // 通算で一番勝っている人の補正の割合（それ以外の勝っている人は補正なし。F-42）
+  FEE_LIFETIME_WIN_MAX: 45000, // 通算で一番勝っている人の補正の上限（F-42）
   FEE_GAMES_BASE: 0.5, // 半荘数の効き。一番多く打った人が1倍、0半荘に近い人がこの倍率
   FEE_SETTLED_FACTOR: 0.8, // 前回の精算を済ませた人の重みの倍率
 } as const;
@@ -409,7 +408,7 @@ export type FeeShare = {
 /**
  * 場代を当日の収支と通算に応じて分ける（F-40）。
  * 基準＝当日の収支＋FEE_LOSS_LIMIT＋通算の補正。0未満は払わない。
- * 対象者の中で通算が一番勝っている人（プラスの人だけ。同額なら全員）は、勝ちの補正を FEE_LIFETIME_TOP_FACTOR 倍にする（F-42）。
+ * 通算の勝ちの補正は、対象者の中で通算が一番勝っている人（プラスの人だけ。同額なら全員）にだけ付ける（F-42）。
  * 重み＝基準×半荘数の倍率×前回の精算の倍率。
  * 当日 FEE_BIG_WIN 以上の人がいれば、その人たちだけで分ける。全員の重みが0なら均等に分ける。
  * FEE_UNIT 単位で分け、割り切れない余りは一番勝っている人に足す。合計は amount と一致する。
@@ -419,8 +418,8 @@ export function splitFeeByResult(amount: number, rows: readonly { memberId: stri
   const topLifetime = Math.max(...rows.map((r) => r.lifetime));
   const correction = (lifetime: number) => {
     if (lifetime > 0) {
-      const f = lifetime === topLifetime ? RULES.FEE_LIFETIME_TOP_FACTOR : 1;
-      return Math.min(RULES.FEE_LIFETIME_WIN_MAX * f, Math.trunc((lifetime * RULES.FEE_LIFETIME_WIN_PERCENT * f) / 100));
+      if (lifetime < topLifetime) return 0;
+      return Math.min(RULES.FEE_LIFETIME_WIN_MAX, Math.trunc((lifetime * RULES.FEE_LIFETIME_WIN_PERCENT) / 100));
     }
     return Math.max(-RULES.FEE_LIFETIME_MAX, Math.trunc((lifetime * RULES.FEE_LIFETIME_PERCENT) / 100));
   };
